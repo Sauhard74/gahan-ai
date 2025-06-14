@@ -303,4 +303,7 @@ def create_cutting_detector(config: Dict) -> CuttingDetector:
     model.query_generator.apply(init_weights)
     model.detection_heads.apply(init_weights)
     
-    return model 
+    return model
+
+# Backward compatibility alias
+CuttingBehaviorModel = CuttingDetector 

@@ -1,14 +1,15 @@
 # Gahan AI Hackathon - Cutting Behavior Detection Config
-# Optimized for F1 > 0.85 with all fixes applied for REAL DATASET
+# Optimized for GPU training with F1 > 0.85
 
 model:
   name: "CuttingDetector"
-  backbone: "google/vit-large-patch16-224"  # ViT-Large for better performance
-  hidden_dim: 768  # Reduced from 1024 to match ViT-Large
+  backbone: "google/vit-large-patch16-224"
+  hidden_dim: 768
   num_classes: 4  # Background, Car, MotorBike, EgoVehicle
   sequence_length: 5
+  num_queries: 100
   
-  # Temporal Encoder (GRU-based as advised)
+  # Temporal Encoder
   temporal_encoder:
     type: "bidirectional_gru"
     hidden_size: 384
@@ -23,13 +24,20 @@ model:
     num_layers: 6
     dropout: 0.1
 
-dataset:
+# Data configuration
+data:
+  data_dir: "mock_dataset"
+  train_split: "Train"
+  val_split_ratio: 0.2
+  image_size: [224, 224]
+  num_workers: 4  # Increased for GPU
+  pin_memory: true
+  prefetch_factor: 2
+  oversample_positive: 3
+  
   # ROI settings for lane-cutting focus
   roi_filter: true
-  roi_bounds: [480, 540, 1440, 1080]  # [x1, y1, x2, y2] for 1920x1080
-  
-  # Class balancing for imbalanced dataset (reduced for production)
-  oversample_positive: 5  # Reduced from 10x to 5x for real dataset
+  roi_bounds: [480, 540, 1440, 1080]
   
   # Data augmentation
   augmentation:
@@ -38,14 +46,17 @@ dataset:
     horizontal_flip: 0.5
     normalize: true
 
+# Training configuration optimized for GPU
 training:
-  batch_size: 4  # Keep small for stability with large dataset
+  batch_size: 16  # Increased for GPU efficiency
   num_epochs: 50
   learning_rate: 0.0001
   weight_decay: 0.0001
   
-  # Mixed precision for speed
-  use_amp: true
+  # GPU optimizations
+  use_amp: true  # Mixed precision for GPU speedup
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
   
   # Loss configuration
   loss_weights:
@@ -55,30 +66,33 @@ training:
     cutting: 3.0
     sequence: 2.0
   
-  # 10x penalty for false negatives (critical insight)
-  false_negative_penalty: 10.0
-  
-  # Optimizer
+  # Optimizer settings
   optimizer: "adamw"
-  scheduler: "cosine"
-  warmup_epochs: 5
+  scheduler_step_size: 15
+  scheduler_gamma: 0.1
+  
+  # Target metrics
+  target_f1: 0.85
+  save_dir: "checkpoints"
 
+# Evaluation settings
 evaluation:
   iou_threshold: 0.5
   confidence_threshold: 0.3
   target_f1: 0.85
 
-paths:
-  # REAL DATASET PATHS - Update these to your actual dataset location
-  dataset_root: "/content/distribution"  # Colab path - change to your local path
-  train_split: "Train"  # Train folder containing REC_* folders
-  test_split: "Test"    # Test folder containing REC_* folders
-  val_split_ratio: 0.2  # Use 20% of train data for validation
-  checkpoints: "checkpoints"
-  logs: "logs"
-
+# Device configuration
 device:
   use_cuda: true
   num_workers: 4
   pin_memory: true
-  non_blocking: true 
+  non_blocking: true
+
+# Paths (legacy - keeping for compatibility)
+paths:
+  dataset_root: "/content/distribution"
+  train_split: "Train"
+  test_split: "Test"
+  val_split_ratio: 0.2
+  checkpoints: "checkpoints"
+  logs: "logs" 
