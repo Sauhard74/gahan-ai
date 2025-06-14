@@ -37,24 +37,26 @@ class OptimizedTrainer:
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
-        # Set device
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # Setup device
+        self.device = torch.device('cuda' if torch.cuda.is_available() and self.config['device']['use_cuda'] else 'cpu')
         logger.info(f"Using device: {self.device}")
         
-        # Initialize mixed precision scaler
-        self.scaler = GradScaler() if self.config['training']['use_amp'] else None
+        # Initialize mixed precision scaler (fix deprecated warning)
+        if self.config['training']['use_amp'] and self.device.type == 'cuda':
+            try:
+                # Try new API first
+                from torch.amp import GradScaler
+                self.scaler = GradScaler('cuda')
+            except (ImportError, TypeError):
+                # Fall back to old API
+                from torch.cuda.amp import GradScaler
+                self.scaler = GradScaler()
+        else:
+            self.scaler = None
         
-        # Create directories
-        self.checkpoint_dir = Path(self.config['paths']['checkpoints'])
-        self.checkpoint_dir.mkdir(exist_ok=True)
-        
-        # Initialize model
+        # Create model, datasets, and training components
         self.model = self._create_model()
-        
-        # Initialize datasets and dataloaders
         self.train_loader, self.val_loader = self._create_dataloaders()
-        
-        # Initialize criterion and optimizer
         self.criterion = self._create_criterion()
         self.optimizer, self.scheduler = self._create_optimizer()
         
@@ -86,8 +88,8 @@ class OptimizedTrainer:
     
     def _create_dataloaders(self) -> tuple:
         """Create train and validation dataloaders."""
-        # Create datasets
-        train_dataset, val_dataset = create_datasets(self.config['dataset'])
+        # Create datasets - pass full config, not just dataset section
+        train_dataset, val_dataset = create_datasets(self.config)
         
         # Log dataset info
         logger.info(f"Train dataset: {len(train_dataset)} samples")
