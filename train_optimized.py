@@ -184,6 +184,19 @@ class OptimizedTrainer:
             if self.scaler:
                 with autocast():
                     outputs = self.model(images)
+                    
+                    # Debug: Check outputs and targets
+                    if batch_idx == 0:  # Only log first batch
+                        logger.info(f"🔍 Debug - Batch {batch_idx}:")
+                        logger.info(f"   Images shape: {images.shape}")
+                        logger.info(f"   Outputs keys: {list(outputs.keys())}")
+                        for key, value in outputs.items():
+                            if isinstance(value, torch.Tensor):
+                                logger.info(f"   {key} shape: {value.shape}")
+                        logger.info(f"   Targets: {len(targets)} samples")
+                        for i, target in enumerate(targets):
+                            logger.info(f"   Target {i}: labels={target['labels'].shape}, boxes={target['boxes'].shape}")
+                    
                     loss_dict = self.criterion(outputs, targets)
                     loss = loss_dict['loss']
                 
@@ -193,6 +206,19 @@ class OptimizedTrainer:
                 self.scaler.update()
             else:
                 outputs = self.model(images)
+                
+                # Debug: Check outputs and targets
+                if batch_idx == 0:  # Only log first batch
+                    logger.info(f"🔍 Debug - Batch {batch_idx}:")
+                    logger.info(f"   Images shape: {images.shape}")
+                    logger.info(f"   Outputs keys: {list(outputs.keys())}")
+                    for key, value in outputs.items():
+                        if isinstance(value, torch.Tensor):
+                            logger.info(f"   {key} shape: {value.shape}")
+                    logger.info(f"   Targets: {len(targets)} samples")
+                    for i, target in enumerate(targets):
+                        logger.info(f"   Target {i}: labels={target['labels'].shape}, boxes={target['boxes'].shape}")
+                
                 loss_dict = self.criterion(outputs, targets)
                 loss = loss_dict['loss']
                 

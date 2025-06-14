@@ -35,6 +35,18 @@ def collate_sequences(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         if all_labels:
             combined_labels = torch.cat(all_labels, dim=0)
             combined_boxes = torch.cat(all_boxes, dim=0)
+            
+            # Validate boxes
+            if len(combined_boxes) > 0:
+                invalid_boxes = (combined_boxes[:, 2] <= combined_boxes[:, 0]) | (combined_boxes[:, 3] <= combined_boxes[:, 1])
+                if invalid_boxes.any():
+                    print(f"Warning: Found {invalid_boxes.sum()} invalid boxes in batch, fixing...")
+                    # Fix invalid boxes
+                    for i in range(len(combined_boxes)):
+                        if combined_boxes[i, 2] <= combined_boxes[i, 0]:
+                            combined_boxes[i, 2] = combined_boxes[i, 0] + 0.1
+                        if combined_boxes[i, 3] <= combined_boxes[i, 1]:
+                            combined_boxes[i, 3] = combined_boxes[i, 1] + 0.1
         else:
             # Handle empty case
             combined_labels = torch.tensor([], dtype=torch.long)

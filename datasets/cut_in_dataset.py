@@ -338,6 +338,14 @@ class CutInSequenceDataset(Dataset):
                     x2 = float(bbox.find('xmax').text)
                     y2 = float(bbox.find('ymax').text)
                     
+                    # Validate and fix bounding box
+                    x1, y1, x2, y2 = self._validate_bbox(x1, y1, x2, y2, image_size, ann_path)
+                    
+                    # Skip if bbox is invalid after fixing
+                    if x1 >= x2 or y1 >= y2:
+                        logger.debug(f"   ⚠️  Skipping invalid bbox in {ann_path.name}: [{x1}, {y1}, {x2}, {y2}]")
+                        continue
+                    
                     # Get cutting attribute
                     cutting = False
                     cutting_elem = obj.find('attributes/attribute[name="Cutting"]')
@@ -355,6 +363,7 @@ class CutInSequenceDataset(Dataset):
                     
                     objects.append(obj_data)
                 except Exception as e:
+                    logger.debug(f"   ⚠️  Error parsing object in {ann_path.name}: {e}")
                     continue
             
             # Filter by ROI
@@ -366,7 +375,41 @@ class CutInSequenceDataset(Dataset):
                 'objects': objects
             }
         except Exception as e:
+            logger.debug(f"   ❌ Error parsing annotation {ann_path.name}: {e}")
             return None
+    
+    def _validate_bbox(self, x1: float, y1: float, x2: float, y2: float, 
+                      image_size: tuple, ann_path: Path) -> tuple:
+        """Validate and fix bounding box coordinates."""
+        width, height = image_size
+        
+        # Clamp to image boundaries
+        x1 = max(0, min(x1, width - 1))
+        y1 = max(0, min(y1, height - 1))
+        x2 = max(0, min(x2, width))
+        y2 = max(0, min(y2, height))
+        
+        # Fix swapped coordinates
+        if x1 > x2:
+            logger.debug(f"   🔧 Fixing swapped x coordinates in {ann_path.name}: {x1} > {x2}")
+            x1, x2 = x2, x1
+        
+        if y1 > y2:
+            logger.debug(f"   🔧 Fixing swapped y coordinates in {ann_path.name}: {y1} > {y2}")
+            y1, y2 = y2, y1
+        
+        # Ensure minimum box size
+        min_size = 1.0
+        if x2 - x1 < min_size:
+            x2 = x1 + min_size
+        if y2 - y1 < min_size:
+            y2 = y1 + min_size
+        
+        # Final clamp after fixing
+        x2 = min(x2, width)
+        y2 = min(y2, height)
+        
+        return x1, y1, x2, y2
     
     def _balance_classes(self) -> List[Dict]:
         """Balance classes by oversampling positive sequences."""

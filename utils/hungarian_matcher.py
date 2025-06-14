@@ -108,9 +108,20 @@ class HungarianMatcher(nn.Module):
         Returns:
             GIoU matrix of shape [N, M]
         """
+        # Fix invalid boxes before computing IoU
+        boxes1 = self._fix_invalid_boxes(boxes1)
+        boxes2 = self._fix_invalid_boxes(boxes2)
+        
         # Degenerate boxes gives inf / nan results, so do an early check
-        assert (boxes1[:, 2:] >= boxes1[:, :2]).all()
-        assert (boxes2[:, 2:] >= boxes2[:, :2]).all()
+        if not (boxes1[:, 2:] >= boxes1[:, :2]).all():
+            print(f"Warning: Invalid boxes1 detected after fixing")
+            # Force fix any remaining invalid boxes
+            boxes1[:, 2:] = torch.maximum(boxes1[:, 2:], boxes1[:, :2] + 1e-6)
+            
+        if not (boxes2[:, 2:] >= boxes2[:, :2]).all():
+            print(f"Warning: Invalid boxes2 detected after fixing")
+            # Force fix any remaining invalid boxes
+            boxes2[:, 2:] = torch.maximum(boxes2[:, 2:], boxes2[:, :2] + 1e-6)
         
         iou, union = self._box_iou(boxes1, boxes2)
         
@@ -121,6 +132,46 @@ class HungarianMatcher(nn.Module):
         area = wh[:, :, 0] * wh[:, :, 1]
         
         return iou - (area - union) / area
+    
+    def _fix_invalid_boxes(self, boxes: torch.Tensor) -> torch.Tensor:
+        """
+        Fix invalid bounding boxes where x2 < x1 or y2 < y1.
+        
+        Args:
+            boxes: [N, 4] boxes in format [x1, y1, x2, y2]
+            
+        Returns:
+            Fixed boxes
+        """
+        if len(boxes) == 0:
+            return boxes
+        
+        fixed_boxes = boxes.clone()
+        
+        # Find invalid boxes
+        invalid_x = fixed_boxes[:, 2] < fixed_boxes[:, 0]  # x2 < x1
+        invalid_y = fixed_boxes[:, 3] < fixed_boxes[:, 1]  # y2 < y1
+        
+        if invalid_x.any() or invalid_y.any():
+            print(f"Warning: Found {invalid_x.sum() + invalid_y.sum()} invalid boxes, fixing...")
+            
+            # Fix x coordinates: swap if x2 < x1
+            if invalid_x.any():
+                temp = fixed_boxes[invalid_x, 0].clone()
+                fixed_boxes[invalid_x, 0] = fixed_boxes[invalid_x, 2]
+                fixed_boxes[invalid_x, 2] = temp
+            
+            # Fix y coordinates: swap if y2 < y1  
+            if invalid_y.any():
+                temp = fixed_boxes[invalid_y, 1].clone()
+                fixed_boxes[invalid_y, 1] = fixed_boxes[invalid_y, 3]
+                fixed_boxes[invalid_y, 3] = temp
+        
+        # Ensure minimum box size
+        min_size = 1e-6
+        fixed_boxes[:, 2:] = torch.maximum(fixed_boxes[:, 2:], fixed_boxes[:, :2] + min_size)
+        
+        return fixed_boxes
     
     def _box_iou(self, boxes1: torch.Tensor, boxes2: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
