@@ -26,7 +26,7 @@ model:
 
 # Data configuration
 data:
-  data_dir: "mock_dataset"
+  data_dir: "/content/distribution"
   train_split: "Train"
   val_split_ratio: 0.2
   image_size: [224, 224]
