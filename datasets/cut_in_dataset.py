@@ -99,36 +99,74 @@ class CutInSequenceDataset(Dataset):
         sequences = []
         rec_folders = [f for f in split_path.iterdir() if f.is_dir() and f.name.startswith('REC_')]
         
-        logger.info(f"Found {len(rec_folders)} REC folders in {split_path}")
+        logger.info(f"🔍 Found {len(rec_folders)} REC folders in {split_path}")
+        logger.info(f"📁 Processing REC folders for {self.split} split...")
         
-        for rec_folder in rec_folders:
+        successful_folders = 0
+        total_images = 0
+        total_annotations = 0
+        
+        for i, rec_folder in enumerate(rec_folders):
+            logger.info(f"📂 [{i+1}/{len(rec_folders)}] Processing: {rec_folder.name}")
+            
             annotations_folder = rec_folder / "Annotations"
             
             if not annotations_folder.exists():
-                logger.warning(f"No Annotations folder in {rec_folder}")
+                logger.warning(f"❌ No Annotations folder in {rec_folder.name}")
                 continue
             
             # Get all image files in Annotations folder (not REC folder)
             image_files = []
             for ext in ['*.jpg', '*.jpeg', '*.png', '*.JPG', '*.JPEG', '*.PNG']:
-                image_files.extend(annotations_folder.glob(ext))
+                found_images = list(annotations_folder.glob(ext))
+                image_files.extend(found_images)
+                if found_images:
+                    logger.debug(f"   📸 Found {len(found_images)} {ext} files")
             
             # Get all annotation files in Annotations folder
             annotation_files = list(annotations_folder.glob('*.xml'))
             
-            if len(image_files) == 0 or len(annotation_files) == 0:
-                logger.warning(f"No images or annotations in {annotations_folder}")
+            logger.info(f"   📊 Found {len(image_files)} images, {len(annotation_files)} annotations")
+            
+            if len(image_files) == 0:
+                logger.warning(f"   ⚠️  No images found in {rec_folder.name}/Annotations")
+                continue
+                
+            if len(annotation_files) == 0:
+                logger.warning(f"   ⚠️  No XML annotations found in {rec_folder.name}/Annotations")
                 continue
             
             # Sort files by frame number
             image_files.sort(key=lambda x: self._extract_frame_number(x.name))
             annotation_files.sort(key=lambda x: self._extract_frame_number(x.name))
             
+            logger.debug(f"   🔢 Frame range: {self._extract_frame_number(image_files[0].name)} to {self._extract_frame_number(image_files[-1].name)}")
+            
             # Create sequences of specified length
             rec_sequences = self._create_sequences_from_folder(rec_folder, image_files, annotation_files)
-            sequences.extend(rec_sequences)
+            
+            if rec_sequences:
+                sequences.extend(rec_sequences)
+                successful_folders += 1
+                total_images += len(image_files)
+                total_annotations += len(annotation_files)
+                
+                # Count cutting sequences
+                cutting_sequences = sum(1 for seq in rec_sequences if seq['has_cutting'])
+                logger.info(f"   ✅ Created {len(rec_sequences)} sequences ({cutting_sequences} with cutting behavior)")
+            else:
+                logger.warning(f"   ❌ No sequences created from {rec_folder.name}")
         
-        logger.info(f"Created {len(sequences)} sequences from {len(rec_folders)} REC folders")
+        logger.info(f"🎯 Dataset loading summary:")
+        logger.info(f"   📁 Successful folders: {successful_folders}/{len(rec_folders)}")
+        logger.info(f"   📸 Total images: {total_images}")
+        logger.info(f"   📄 Total annotations: {total_annotations}")
+        logger.info(f"   🎬 Total sequences: {len(sequences)}")
+        
+        # Count cutting behavior
+        cutting_sequences = sum(1 for seq in sequences if seq['has_cutting'])
+        logger.info(f"   ✂️  Sequences with cutting: {cutting_sequences}/{len(sequences)} ({cutting_sequences/len(sequences)*100:.1f}%)")
+        
         return sequences
     
     def _extract_frame_number(self, filename: str) -> int:
@@ -150,6 +188,10 @@ class CutInSequenceDataset(Dataset):
         
         # Match images with annotations (both are in Annotations folder)
         matched_pairs = []
+        unmatched_images = []
+        
+        logger.debug(f"   🔗 Matching {len(image_files)} images with annotations...")
+        
         for img_file in image_files:
             # Find corresponding annotation in same folder
             ann_name = img_file.stem + '.xml'
@@ -157,13 +199,27 @@ class CutInSequenceDataset(Dataset):
             
             if ann_file.exists():
                 matched_pairs.append((img_file, ann_file))
+            else:
+                unmatched_images.append(img_file.name)
+        
+        if unmatched_images:
+            logger.debug(f"   ⚠️  {len(unmatched_images)} images without matching XML files")
+            if len(unmatched_images) <= 5:  # Show first few examples
+                logger.debug(f"      Examples: {', '.join(unmatched_images)}")
+        
+        logger.debug(f"   ✅ Matched {len(matched_pairs)} image-annotation pairs")
         
         if len(matched_pairs) < self.sequence_length:
-            logger.warning(f"Not enough matched pairs in {rec_folder}: {len(matched_pairs)}")
+            logger.warning(f"   ❌ Not enough matched pairs in {rec_folder.name}: {len(matched_pairs)} < {self.sequence_length}")
             return sequences
         
         # Create overlapping sequences
-        for i in range(len(matched_pairs) - self.sequence_length + 1):
+        num_possible_sequences = len(matched_pairs) - self.sequence_length + 1
+        logger.debug(f"   🎬 Creating {num_possible_sequences} overlapping sequences...")
+        
+        cutting_count = 0
+        
+        for i in range(num_possible_sequences):
             sequence_pairs = matched_pairs[i:i + self.sequence_length]
             
             sequence_data = {
@@ -177,9 +233,12 @@ class CutInSequenceDataset(Dataset):
             for _, ann_path in sequence_pairs:
                 if self._has_cutting_behavior(ann_path):
                     sequence_data['has_cutting'] = True
+                    cutting_count += 1
                     break
             
             sequences.append(sequence_data)
+        
+        logger.debug(f"   📊 Sequence stats: {len(sequences)} total, {cutting_count} with cutting behavior")
         
         return sequences
     
@@ -202,7 +261,10 @@ class CutInSequenceDataset(Dataset):
     def _split_train_val(self) -> List[Dict]:
         """Split training data into train/val."""
         if self.val_split_ratio == 0:
+            logger.info("📊 No validation split requested (val_split_ratio = 0)")
             return self.sequences
+        
+        logger.info(f"🔄 Splitting data for {'validation' if self.is_validation else 'training'} set...")
         
         # Group sequences by REC folder to avoid data leakage
         rec_groups = {}
@@ -212,6 +274,14 @@ class CutInSequenceDataset(Dataset):
                 rec_groups[rec_folder] = []
             rec_groups[rec_folder].append(seq)
         
+        logger.info(f"   📁 Grouping by REC folders: {len(rec_groups)} unique folders")
+        
+        # Show folder distribution
+        for folder, seqs in list(rec_groups.items())[:3]:  # Show first 3 as examples
+            cutting_seqs = sum(1 for s in seqs if s['has_cutting'])
+            folder_name = Path(folder).name
+            logger.debug(f"      {folder_name}: {len(seqs)} sequences ({cutting_seqs} cutting)")
+        
         # Split REC folders
         rec_folders = list(rec_groups.keys())
         random.shuffle(rec_folders)
@@ -220,13 +290,22 @@ class CutInSequenceDataset(Dataset):
         
         if self.is_validation:
             selected_folders = rec_folders[:val_count]
+            logger.info(f"   📋 Selected {len(selected_folders)} folders for VALIDATION ({self.val_split_ratio:.1%})")
         else:
             selected_folders = rec_folders[val_count:]
+            logger.info(f"   📋 Selected {len(selected_folders)} folders for TRAINING ({1-self.val_split_ratio:.1%})")
         
         # Collect sequences from selected folders
         selected_sequences = []
+        total_cutting = 0
+        
         for folder in selected_folders:
-            selected_sequences.extend(rec_groups[folder])
+            folder_sequences = rec_groups[folder]
+            selected_sequences.extend(folder_sequences)
+            cutting_in_folder = sum(1 for s in folder_sequences if s['has_cutting'])
+            total_cutting += cutting_in_folder
+        
+        logger.info(f"   ✅ Final split: {len(selected_sequences)} sequences ({total_cutting} with cutting)")
         
         return selected_sequences
     
@@ -294,16 +373,45 @@ class CutInSequenceDataset(Dataset):
         positive_sequences = [seq for seq in self.sequences if seq['has_cutting']]
         negative_sequences = [seq for seq in self.sequences if not seq['has_cutting']]
         
+        logger.info(f"⚖️  Class balancing for {'validation' if self.is_validation else 'training'} set:")
+        logger.info(f"   📊 Original distribution:")
+        logger.info(f"      Positive (cutting): {len(positive_sequences)}")
+        logger.info(f"      Negative (no cutting): {len(negative_sequences)}")
+        
+        if len(positive_sequences) == 0:
+            logger.warning(f"   ⚠️  No positive sequences found! All sequences are negative.")
+        
         balanced_sequences = negative_sequences.copy()
         
         # Add oversampled positive sequences (only if not validation)
-        if not self.is_validation:
-            for _ in range(self.oversample_positive):
+        if not self.is_validation and self.oversample_positive > 1:
+            logger.info(f"   🔄 Applying {self.oversample_positive}x oversampling to positive sequences...")
+            for i in range(self.oversample_positive):
                 balanced_sequences.extend(positive_sequences)
+                logger.debug(f"      Added copy {i+1}/{self.oversample_positive}: +{len(positive_sequences)} sequences")
         else:
             balanced_sequences.extend(positive_sequences)
+            if self.is_validation:
+                logger.info(f"   📋 No oversampling for validation set")
+            else:
+                logger.info(f"   📋 No oversampling applied (oversample_positive = {self.oversample_positive})")
+        
+        # Final counts
+        final_positive = sum(1 for seq in balanced_sequences if seq['has_cutting'])
+        final_negative = sum(1 for seq in balanced_sequences if not seq['has_cutting'])
+        
+        logger.info(f"   ✅ Final balanced distribution:")
+        logger.info(f"      Positive (cutting): {final_positive}")
+        logger.info(f"      Negative (no cutting): {final_negative}")
+        logger.info(f"      Total sequences: {len(balanced_sequences)}")
+        
+        if final_positive > 0:
+            ratio = final_negative / final_positive
+            logger.info(f"      Negative:Positive ratio: {ratio:.1f}:1")
         
         random.shuffle(balanced_sequences)
+        logger.debug(f"   🔀 Shuffled {len(balanced_sequences)} sequences")
+        
         return balanced_sequences
     
     def __len__(self) -> int:
