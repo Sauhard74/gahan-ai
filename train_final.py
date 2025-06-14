@@ -39,15 +39,15 @@ class FinalOptimizedTrainer:
         
         # Setup device
         self.device = torch.device('cuda' if torch.cuda.is_available() and self.config['device']['use_cuda'] else 'cpu')
-        logger.info(f"🚀 Using device: {self.device}")
+        print(f"🚀 Using device: {self.device}")
         
         # Initialize mixed precision scaler
         if self.config['training']['use_amp'] and self.device.type == 'cuda':
             self.scaler = GradScaler()
-            logger.info("⚡ Mixed precision training enabled")
+            print("⚡ Mixed precision training enabled")
         else:
             self.scaler = None
-            logger.info("🔧 Standard precision training")
+            print("🔧 Standard precision training")
         
         # Create model, datasets, and training components
         self.model = self._create_model()
@@ -65,36 +65,36 @@ class FinalOptimizedTrainer:
         self.checkpoint_dir = Path(self.config['paths']['checkpoints'])
         self.checkpoint_dir.mkdir(exist_ok=True)
         
-        logger.info("✅ Trainer initialized successfully!")
+        print("✅ Trainer initialized successfully!")
     
     def _create_model(self) -> nn.Module:
         """Create and initialize the model."""
-        logger.info("🤖 Creating model...")
+        print("🤖 Creating model...")
         model = create_cutting_detector(self.config['model'])
         model = model.to(self.device)
         
         # Use DataParallel if multiple GPUs available
         if torch.cuda.device_count() > 1:
-            logger.info(f"🔥 Using {torch.cuda.device_count()} GPUs with DataParallel")
+            print(f"🔥 Using {torch.cuda.device_count()} GPUs with DataParallel")
             model = nn.DataParallel(model)
         
         # Log model info
         total_params = sum(p.numel() for p in model.parameters())
         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        logger.info(f"📊 Model parameters: {total_params:,} total, {trainable_params:,} trainable")
+        print(f"📊 Model parameters: {total_params:,} total, {trainable_params:,} trainable")
         
         return model
     
     def _create_dataloaders(self) -> tuple:
         """Create train and validation dataloaders."""
-        logger.info("📊 Creating datasets...")
+        print("📊 Creating datasets...")
         
         # Create datasets
         train_dataset, val_dataset = create_datasets(self.config)
         
         # Log dataset info
-        logger.info(f"📈 Train dataset: {len(train_dataset)} samples")
-        logger.info(f"📉 Val dataset: {len(val_dataset)} samples")
+        print(f"📈 Train dataset: {len(train_dataset)} samples")
+        print(f"📉 Val dataset: {len(val_dataset)} samples")
         
         # Create dataloaders with optimizations
         train_loader = DataLoader(
@@ -119,19 +119,19 @@ class FinalOptimizedTrainer:
             prefetch_factor=2 if self.config['device']['num_workers'] > 0 else 2
         )
         
-        logger.info(f"🔄 Train loader: {len(train_loader)} batches")
-        logger.info(f"🔄 Val loader: {len(val_loader)} batches")
+        print(f"🔄 Train loader: {len(train_loader)} batches")
+        print(f"🔄 Val loader: {len(val_loader)} batches")
         
         return train_loader, val_loader
     
     def _create_criterion(self):
         """Create loss criterion."""
-        logger.info("📏 Creating loss criterion...")
+        print("📏 Creating loss criterion...")
         return create_criterion(self.config['training']['loss_weights'])
     
     def _create_optimizer(self):
         """Create optimizer and scheduler."""
-        logger.info("⚙️ Creating optimizer and scheduler...")
+        print("⚙️ Creating optimizer and scheduler...")
         
         # Optimizer
         if self.config['training']['optimizer'] == 'adamw':
@@ -229,11 +229,11 @@ class FinalOptimizedTrainer:
                     elapsed = time.time() - start_time
                     batches_per_sec = (batch_idx + 1) / elapsed
                     eta = (num_batches - batch_idx - 1) / batches_per_sec if batches_per_sec > 0 else 0
-                    logger.info(f"Batch {batch_idx+1}/{num_batches} | Loss: {loss.item():.4f} | "
-                              f"Speed: {batches_per_sec:.2f} batch/s | ETA: {eta/60:.1f}min")
+                    print(f"Batch {batch_idx+1}/{num_batches} | Loss: {loss.item():.4f} | "
+                          f"Speed: {batches_per_sec:.2f} batch/s | ETA: {eta/60:.1f}min")
                 
             except Exception as e:
-                logger.error(f"Error in batch {batch_idx}: {e}")
+                print(f"Error in batch {batch_idx}: {e}")
                 continue
         
         # Average losses
@@ -242,7 +242,7 @@ class FinalOptimizedTrainer:
             loss_components[key] /= len(self.train_loader)
         
         epoch_time = time.time() - start_time
-        logger.info(f"✅ Epoch {self.current_epoch+1} completed in {epoch_time/60:.1f}min")
+        print(f"✅ Epoch {self.current_epoch+1} completed in {epoch_time/60:.1f}min")
         
         return {'total_loss': avg_loss, **loss_components}
     
@@ -251,7 +251,7 @@ class FinalOptimizedTrainer:
         self.model.eval()
         val_loss = 0.0
         
-        logger.info("🔍 Running validation...")
+        print("🔍 Running validation...")
         
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
@@ -280,7 +280,7 @@ class FinalOptimizedTrainer:
                     val_loss += loss_dict['loss'].item()
                     
                 except Exception as e:
-                    logger.error(f"Error in validation batch: {e}")
+                    print(f"Error in validation batch: {e}")
                     continue
         
         avg_val_loss = val_loss / len(self.val_loader) if len(self.val_loader) > 0 else 0.0
@@ -314,22 +314,22 @@ class FinalOptimizedTrainer:
         if is_best:
             best_path = self.checkpoint_dir / "best_model.pth"
             torch.save(checkpoint, best_path)
-            logger.info(f"🏆 New best model saved with F1: {metrics['micro_f1']:.4f}")
+            print(f"🏆 New best model saved with F1: {metrics['micro_f1']:.4f}")
     
     def train(self):
         """Main training loop."""
-        logger.info("🚀 Starting training...")
-        logger.info(f"📊 Training for {self.config['training']['num_epochs']} epochs")
-        logger.info(f"🎯 Target F1 score: {self.config['evaluation']['target_f1']}")
+        print("🚀 Starting training...")
+        print(f"📊 Training for {self.config['training']['num_epochs']} epochs")
+        print(f"🎯 Target F1 score: {self.config['evaluation']['target_f1']}")
         
         start_time = time.time()
         
         for epoch in range(self.config['training']['num_epochs']):
             self.current_epoch = epoch
             
-            logger.info(f"\n{'='*60}")
-            logger.info(f"🔄 EPOCH {epoch+1}/{self.config['training']['num_epochs']}")
-            logger.info(f"{'='*60}")
+            print(f"\n{'='*60}")
+            print(f"🔄 EPOCH {epoch+1}/{self.config['training']['num_epochs']}")
+            print(f"{'='*60}")
             
             # Train epoch
             train_metrics = self.train_epoch()
@@ -342,11 +342,11 @@ class FinalOptimizedTrainer:
             
             # Log metrics
             current_f1 = val_metrics['micro_f1']
-            logger.info(f"\n📊 EPOCH {epoch+1} RESULTS:")
-            logger.info(f"   Train Loss: {train_metrics['total_loss']:.4f}")
-            logger.info(f"   Val Loss: {val_metrics['val_loss']:.4f}")
-            logger.info(f"   Val F1: {current_f1:.4f}")
-            logger.info(f"   Learning Rate: {self.optimizer.param_groups[0]['lr']:.2e}")
+            print(f"\n📊 EPOCH {epoch+1} RESULTS:")
+            print(f"   Train Loss: {train_metrics['total_loss']:.4f}")
+            print(f"   Val Loss: {val_metrics['val_loss']:.4f}")
+            print(f"   Val F1: {current_f1:.4f}")
+            print(f"   Learning Rate: {self.optimizer.param_groups[0]['lr']:.2e}")
             
             # Save checkpoint
             is_best = current_f1 > self.best_f1
@@ -357,41 +357,143 @@ class FinalOptimizedTrainer:
             
             # Early stopping check
             if current_f1 >= self.config['evaluation']['target_f1']:
-                logger.info(f"🎉 Target F1 {self.config['evaluation']['target_f1']} reached! Stopping training.")
+                print(f"🎉 Target F1 {self.config['evaluation']['target_f1']} reached! Stopping training.")
                 break
         
         total_time = time.time() - start_time
-        logger.info(f"\n🏁 Training completed in {total_time/3600:.1f} hours")
-        logger.info(f"🏆 Best F1 score: {self.best_f1:.4f}")
+        print(f"\n🏁 Training completed in {total_time/3600:.1f} hours")
+        print(f"🏆 Best F1 score: {self.best_f1:.4f}")
 
 def main():
     """Main function."""
     import argparse
     
     parser = argparse.ArgumentParser(description="Train Cutting Detection Model")
-    parser.add_argument('--config', type=str, default='configs/experiment_config.yaml',
-                       help='Path to config file')
-    parser.add_argument('--resume', type=str, default=None,
-                       help='Path to checkpoint to resume from')
+    parser.add_argument('--config', type=str, required=True, help='Path to config file')
+    parser.add_argument('--resume', type=str, help='Path to checkpoint to resume from')
+    parser.add_argument('--debug', action='store_true', help='Enable debug mode')
     
     args = parser.parse_args()
     
-    # Create trainer
-    trainer = FinalOptimizedTrainer(args.config)
+    # Load configuration
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Setup device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"🚀 Using device: {device}")
+    
+    # Setup mixed precision
+    use_amp = config.get('use_mixed_precision', True) and device.type == 'cuda'
+    if use_amp:
+        print("⚡ Mixed precision training enabled")
+    else:
+        print("🔧 Standard precision training")
+    
+    # Create model
+    print("🤖 Creating model...")
+    model = create_cutting_detector(config['model'])
+    model = model.to(device)
+    
+    # Count parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"📊 Model parameters: {total_params:,} total, {trainable_params:,} trainable")
+    
+    # Create datasets
+    print("📊 Creating datasets...")
+    train_dataset = create_datasets(config)[0]
+    val_dataset = create_datasets(config)[1]
+    
+    print(f"📈 Train dataset: {len(train_dataset)} samples")
+    print(f"📉 Val dataset: {len(val_dataset)} samples")
+    
+    # Create data loaders
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config['training']['batch_size'],
+        shuffle=True,
+        num_workers=config['data']['num_workers'],
+        pin_memory=device.type == 'cuda',
+        collate_fn=collate_sequences,
+        persistent_workers=config['data']['num_workers'] > 0
+    )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config['training']['batch_size'],
+        shuffle=False,
+        num_workers=config['data']['num_workers'],
+        pin_memory=device.type == 'cuda',
+        collate_fn=collate_sequences,
+        persistent_workers=config['data']['num_workers'] > 0
+    )
+    
+    print(f"🔄 Train loader: {len(train_loader)} batches")
+    print(f"🔄 Val loader: {len(val_loader)} batches")
+    
+    # Create loss criterion
+    print("📏 Creating loss criterion...")
+    criterion = create_criterion(config['training']['loss_weights'])
+    
+    # Create optimizer and scheduler
+    print("⚙️ Creating optimizer and scheduler...")
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config['training']['learning_rate'],
+        weight_decay=config['training']['weight_decay']
+    )
+    
+    scheduler = torch.optim.lr_scheduler.StepLR(
+        optimizer,
+        step_size=config['training']['scheduler_step_size'],
+        gamma=config['training']['scheduler_gamma']
+    )
+    
+    # Initialize trainer
+    trainer = FinalOptimizedTrainer(config)
+    trainer.model = model
+    trainer.optimizer = optimizer
+    trainer.scheduler = scheduler
+    trainer.device = device
+    trainer.scaler = GradScaler() if use_amp else None
+    
+    print("✅ Trainer initialized successfully!")
     
     # Resume from checkpoint if specified
+    start_epoch = 1
     if args.resume:
-        logger.info(f"📂 Resuming from checkpoint: {args.resume}")
-        checkpoint = torch.load(args.resume, map_location=trainer.device)
+        print(f"📂 Resuming from checkpoint: {args.resume}")
+        checkpoint = torch.load(args.resume, map_location=device)
         trainer.model.load_state_dict(checkpoint['model_state_dict'])
         trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         trainer.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         trainer.current_epoch = checkpoint['epoch']
         trainer.best_f1 = checkpoint['metrics'].get('micro_f1', 0.0)
-        logger.info(f"✅ Resumed from epoch {trainer.current_epoch+1}")
+        print(f"✅ Resumed from epoch {trainer.current_epoch+1}")
     
     # Start training
-    trainer.train()
+    print("🚀 Starting training...")
+    print(f"📊 Training for {config['training']['num_epochs']} epochs")
+    print(f"🎯 Target F1 score: {config['training']['target_f1']}")
+    
+    try:
+        trainer.train()
+        print("🎉 Training completed successfully!")
+        
+    except KeyboardInterrupt:
+        print("\n⏹️ Training interrupted by user")
+        print("💾 Saving current state...")
+        trainer.save_checkpoint(epoch=trainer.current_epoch, is_best=False, interrupted=True)
+        
+    except Exception as e:
+        print(f"❌ Training failed with error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+    finally:
+        print("🧹 Cleaning up...")
+        torch.cuda.empty_cache() if device.type == 'cuda' else None
 
 if __name__ == "__main__":
     main() 

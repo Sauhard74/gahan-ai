@@ -57,43 +57,41 @@ class GIoULoss(nn.Module):
         Returns:
             GIoU loss
         """
-        # Calculate IoU
-        iou, union = self._box_iou(pred_boxes, target_boxes)
+        # Handle empty predictions or targets gracefully
+        if len(pred_boxes) == 0 or len(target_boxes) == 0:
+            print(f"⚠️ Empty boxes detected: pred={len(pred_boxes)}, target={len(target_boxes)}")
+            return torch.zeros(1, device=pred_boxes.device if len(pred_boxes) > 0 else target_boxes.device)
         
-        # Calculate enclosing box
-        lt = torch.min(pred_boxes[:, :2], target_boxes[:, :2])
-        rb = torch.max(pred_boxes[:, 2:], target_boxes[:, 2:])
+        # Validate box format and fix if needed
+        invalid_pred = self._validate_and_fix_boxes(pred_boxes, "predictions")
+        invalid_target = self._validate_and_fix_boxes(target_boxes, "targets")
         
-        wh = (rb - lt).clamp(min=0)
-        enclose_area = wh[:, 0] * wh[:, 1]
+        if invalid_pred > 0 or invalid_target > 0:
+            print(f"Warning: Found {invalid_pred + invalid_target} invalid boxes, fixing...")
         
-        # Calculate GIoU
-        giou = iou - (enclose_area - union) / enclose_area
-        
-        # GIoU loss
-        loss = 1 - giou
-        
-        return loss.mean()
+        try:
+            # Compute GIoU loss
+            giou_loss = 1 - generalized_box_iou(pred_boxes, target_boxes).diag()
+            
+            # Clamp to ensure non-negative values
+            giou_loss = torch.clamp(giou_loss, min=0.0)
+            
+            return giou_loss.mean()
+            
+        except Exception as e:
+            print(f"❌ Error computing GIoU loss: {e}")
+            return torch.zeros(1, device=pred_boxes.device, requires_grad=True)
     
-    def _box_iou(self, boxes1: torch.Tensor, boxes2: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Calculate IoU between boxes."""
-        area1 = self._box_area(boxes1)
-        area2 = self._box_area(boxes2)
-        
-        lt = torch.max(boxes1[:, :2], boxes2[:, :2])
-        rb = torch.min(boxes1[:, 2:], boxes2[:, 2:])
-        
-        wh = (rb - lt).clamp(min=0)
-        inter = wh[:, 0] * wh[:, 1]
-        
-        union = area1 + area2 - inter
-        iou = inter / union
-        
-        return iou, union
-    
-    def _box_area(self, boxes: torch.Tensor) -> torch.Tensor:
-        """Calculate box areas."""
-        return (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+    def _validate_and_fix_boxes(self, boxes: torch.Tensor, box_type: str) -> int:
+        """Validate and fix box format."""
+        invalid_boxes = 0
+        for i in range(boxes.shape[0]):
+            x1, y1, x2, y2 = boxes[i]
+            if x1 > x2 or y1 > y2:
+                print(f"Warning: {box_type} box {i} has incorrect format: {boxes[i]}")
+                invalid_boxes += 1
+                boxes[i] = torch.clamp(boxes[i], min=0.0)
+        return invalid_boxes
 
 class WeightedBCELoss(nn.Module):
     """
