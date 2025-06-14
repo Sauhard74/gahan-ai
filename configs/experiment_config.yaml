@@ -41,8 +41,8 @@ dataset:
 training:
   batch_size: 8
   num_epochs: 50
-  learning_rate: 1e-4
-  weight_decay: 1e-4
+  learning_rate: 0.0001
+  weight_decay: 0.0001
   
   # Mixed precision for speed
   use_amp: true
