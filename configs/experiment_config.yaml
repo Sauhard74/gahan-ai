@@ -1,5 +1,5 @@
 # Gahan AI Hackathon - Cutting Behavior Detection Config
-# Optimized for F1 > 0.85 with all insights incorporated
+# Optimized for F1 > 0.85 with all fixes applied for REAL DATASET
 
 model:
   name: "CuttingDetector"
@@ -28,8 +28,8 @@ dataset:
   roi_filter: true
   roi_bounds: [480, 540, 1440, 1080]  # [x1, y1, x2, y2] for 1920x1080
   
-  # Class balancing for imbalanced dataset
-  oversample_positive: 10  # 10x oversampling of cutting sequences
+  # Class balancing for imbalanced dataset (reduced for production)
+  oversample_positive: 5  # Reduced from 10x to 5x for real dataset
   
   # Data augmentation
   augmentation:
@@ -39,7 +39,7 @@ dataset:
     normalize: true
 
 training:
-  batch_size: 4
+  batch_size: 4  # Keep small for stability with large dataset
   num_epochs: 50
   learning_rate: 0.0001
   weight_decay: 0.0001
@@ -52,6 +52,8 @@ training:
     classification: 1.0
     bbox_regression: 5.0
     giou: 2.0
+    cutting: 3.0
+    sequence: 2.0
   
   # 10x penalty for false negatives (critical insight)
   false_negative_penalty: 10.0
@@ -67,8 +69,8 @@ evaluation:
   target_f1: 0.85
 
 paths:
-  # Actual dataset structure: each REC folder contains images + Annotations subfolder
-  dataset_root: "/content/distribution"  # Root containing Train/ and Test/
+  # REAL DATASET PATHS - Update these to your actual dataset location
+  dataset_root: "/content/distribution"  # Colab path - change to your local path
   train_split: "Train"  # Train folder containing REC_* folders
   test_split: "Test"    # Test folder containing REC_* folders
   val_split_ratio: 0.2  # Use 20% of train data for validation

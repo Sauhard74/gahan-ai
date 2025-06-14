@@ -213,14 +213,26 @@ class CutInSequenceDataset(Dataset):
             logger.warning(f"   ❌ Not enough matched pairs in {rec_folder.name}: {len(matched_pairs)} < {self.sequence_length}")
             return sequences
         
-        # Create overlapping sequences
-        num_possible_sequences = len(matched_pairs) - self.sequence_length + 1
-        logger.debug(f"   🎬 Creating {num_possible_sequences} overlapping sequences...")
+        # Create sequences with stride (not full overlap) to reduce dataset size
+        stride = max(1, self.sequence_length // 3)  # More conservative stride for real dataset
+        num_possible_sequences = (len(matched_pairs) - self.sequence_length) // stride + 1
+        
+        # Remove debugging limit for production
+        # max_sequences_per_folder = 50  # REMOVED - no limit for real dataset
+        # num_possible_sequences = min(num_possible_sequences, max_sequences_per_folder)
+        
+        logger.debug(f"   🎬 Creating {num_possible_sequences} sequences with stride {stride}...")
         
         cutting_count = 0
         
         for i in range(num_possible_sequences):
-            sequence_pairs = matched_pairs[i:i + self.sequence_length]
+            start_idx = i * stride
+            end_idx = start_idx + self.sequence_length
+            
+            if end_idx > len(matched_pairs):
+                break
+                
+            sequence_pairs = matched_pairs[start_idx:end_idx]
             
             sequence_data = {
                 'rec_folder': str(rec_folder),
@@ -383,7 +395,10 @@ class CutInSequenceDataset(Dataset):
         """Validate and fix bounding box coordinates."""
         width, height = image_size
         
-        # Clamp to image boundaries
+        # Convert to float to handle string inputs
+        x1, y1, x2, y2 = float(x1), float(y1), float(x2), float(y2)
+        
+        # Clamp to image boundaries first
         x1 = max(0, min(x1, width - 1))
         y1 = max(0, min(y1, height - 1))
         x2 = max(0, min(x2, width))
@@ -399,15 +414,22 @@ class CutInSequenceDataset(Dataset):
             y1, y2 = y2, y1
         
         # Ensure minimum box size
-        min_size = 1.0
+        min_size = 2.0  # Increased minimum size
         if x2 - x1 < min_size:
-            x2 = x1 + min_size
+            center_x = (x1 + x2) / 2
+            x1 = max(0, center_x - min_size / 2)
+            x2 = min(width, center_x + min_size / 2)
+            
         if y2 - y1 < min_size:
-            y2 = y1 + min_size
+            center_y = (y1 + y2) / 2
+            y1 = max(0, center_y - min_size / 2)
+            y2 = min(height, center_y + min_size / 2)
         
-        # Final clamp after fixing
-        x2 = min(x2, width)
-        y2 = min(y2, height)
+        # Final validation - if still invalid, make it a small valid box
+        if x1 >= x2 or y1 >= y2:
+            logger.warning(f"   ⚠️  Creating fallback bbox for invalid box in {ann_path.name}")
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(width, x1 + min_size), min(height, y1 + min_size)
         
         return x1, y1, x2, y2
     
@@ -426,18 +448,32 @@ class CutInSequenceDataset(Dataset):
         
         balanced_sequences = negative_sequences.copy()
         
+        # Remove debugging limits for production
+        # max_negative_sequences = 1000  # REMOVED - no limit for real dataset
+        # if len(balanced_sequences) > max_negative_sequences:
+        #     balanced_sequences = balanced_sequences[:max_negative_sequences]
+        #     logger.info(f"   🔧 Limited negative sequences to {max_negative_sequences} for debugging")
+        
         # Add oversampled positive sequences (only if not validation)
         if not self.is_validation and self.oversample_positive > 1:
-            logger.info(f"   🔄 Applying {self.oversample_positive}x oversampling to positive sequences...")
-            for i in range(self.oversample_positive):
+            # Use configured oversampling (no reduction for production)
+            actual_oversample = self.oversample_positive
+            logger.info(f"   🔄 Applying {actual_oversample}x oversampling to positive sequences...")
+            for i in range(actual_oversample):
                 balanced_sequences.extend(positive_sequences)
-                logger.debug(f"      Added copy {i+1}/{self.oversample_positive}: +{len(positive_sequences)} sequences")
+                logger.debug(f"      Added copy {i+1}/{actual_oversample}: +{len(positive_sequences)} sequences")
         else:
             balanced_sequences.extend(positive_sequences)
             if self.is_validation:
                 logger.info(f"   📋 No oversampling for validation set")
             else:
                 logger.info(f"   📋 No oversampling applied (oversample_positive = {self.oversample_positive})")
+        
+        # Remove debugging total limit for production
+        # max_total_sequences = 2000  # REMOVED - no limit for real dataset
+        # if len(balanced_sequences) > max_total_sequences:
+        #     balanced_sequences = balanced_sequences[:max_total_sequences]
+        #     logger.info(f"   🔧 Limited total sequences to {max_total_sequences} for debugging")
         
         # Final counts
         final_positive = sum(1 for seq in balanced_sequences if seq['has_cutting'])

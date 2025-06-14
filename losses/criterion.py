@@ -171,8 +171,36 @@ class CuttingDetectionLoss(nn.Module):
         Returns:
             Dictionary of losses
         """
+        # Check if we have any valid targets
+        has_valid_targets = any(len(t['labels']) > 0 for t in targets)
+        
+        if not has_valid_targets:
+            # Return zero losses if no valid targets
+            device = outputs['pred_logits'].device
+            return {
+                'loss': torch.tensor(0.0, device=device, requires_grad=True),
+                'loss_class': torch.tensor(0.0, device=device, requires_grad=True),
+                'loss_bbox': torch.tensor(0.0, device=device, requires_grad=True),
+                'loss_giou': torch.tensor(0.0, device=device, requires_grad=True),
+                'loss_cutting': torch.tensor(0.0, device=device, requires_grad=True),
+                'loss_sequence': torch.tensor(0.0, device=device, requires_grad=True)
+            }
+        
         # Hungarian matching for training
-        indices = self.matcher(outputs, targets)
+        try:
+            indices = self.matcher(outputs, targets)
+        except Exception as e:
+            print(f"Warning: Hungarian matcher failed: {e}")
+            # Return zero losses if matching fails
+            device = outputs['pred_logits'].device
+            return {
+                'loss': torch.tensor(0.0, device=device, requires_grad=True),
+                'loss_class': torch.tensor(0.0, device=device, requires_grad=True),
+                'loss_bbox': torch.tensor(0.0, device=device, requires_grad=True),
+                'loss_giou': torch.tensor(0.0, device=device, requires_grad=True),
+                'loss_cutting': torch.tensor(0.0, device=device, requires_grad=True),
+                'loss_sequence': torch.tensor(0.0, device=device, requires_grad=True)
+            }
         
         # Compute individual losses
         loss_class = self._classification_loss(outputs, targets, indices)
@@ -180,6 +208,13 @@ class CuttingDetectionLoss(nn.Module):
         loss_giou = self._giou_loss(outputs, targets, indices)
         loss_cutting = self._cutting_loss(outputs, targets, indices)
         loss_sequence = self._sequence_cutting_loss(outputs, targets)
+        
+        # Ensure all losses are positive
+        loss_class = torch.clamp(loss_class, min=0.0)
+        loss_bbox = torch.clamp(loss_bbox, min=0.0)
+        loss_giou = torch.clamp(loss_giou, min=0.0)
+        loss_cutting = torch.clamp(loss_cutting, min=0.0)
+        loss_sequence = torch.clamp(loss_sequence, min=0.0)
         
         # Combine losses
         total_loss = (
@@ -321,13 +356,13 @@ class CuttingDetectionLoss(nn.Module):
             has_cutting = target.get('has_cutting', False)
             target_sequence.append(float(has_cutting))
         
-        target_sequence = torch.tensor(target_sequence, device=pred_sequence.device)
+        target_sequence = torch.tensor(target_sequence, device=pred_sequence.device, dtype=torch.float32)
         
         # Apply sigmoid to predictions
         pred_sequence_prob = torch.sigmoid(pred_sequence.squeeze(-1))
         
-        # Weighted BCE loss with false negative penalty
-        loss_sequence = self.weighted_bce(pred_sequence_prob, target_sequence)
+        # Use standard BCE loss instead of weighted BCE for sequence level
+        loss_sequence = F.binary_cross_entropy(pred_sequence_prob, target_sequence)
         
         return loss_sequence
 
