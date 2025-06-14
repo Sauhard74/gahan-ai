@@ -66,6 +66,10 @@ class OptimizedTrainer:
         self.train_losses = []
         self.val_metrics = []
         
+        # Create directories
+        self.checkpoint_dir = Path(self.config['paths']['checkpoints'])
+        self.checkpoint_dir.mkdir(exist_ok=True)
+        
         # Initialize wandb if configured
         if self.config.get('use_wandb', False):
             wandb.init(project="cutting-detection", config=self.config)
@@ -167,8 +171,8 @@ class OptimizedTrainer:
             
             for i in range(len(batch['targets'])):
                 target = {
-                    'labels': [labels.to(self.device, non_blocking=True) for labels in batch['targets'][i]['labels']],
-                    'boxes': [boxes.to(self.device, non_blocking=True) for boxes in batch['targets'][i]['boxes']],
+                    'labels': batch['targets'][i]['labels'].to(self.device, non_blocking=True),
+                    'boxes': batch['targets'][i]['boxes'].to(self.device, non_blocking=True),
                     'has_cutting': batch['targets'][i]['has_cutting']
                 }
                 targets.append(target)
@@ -232,8 +236,8 @@ class OptimizedTrainer:
                 
                 for i in range(len(batch['targets'])):
                     target = {
-                        'labels': [labels.to(self.device, non_blocking=True) for labels in batch['targets'][i]['labels']],
-                        'boxes': [boxes.to(self.device, non_blocking=True) for boxes in batch['targets'][i]['boxes']],
+                        'labels': batch['targets'][i]['labels'].to(self.device, non_blocking=True),
+                        'boxes': batch['targets'][i]['boxes'].to(self.device, non_blocking=True),
                         'has_cutting': batch['targets'][i]['has_cutting']
                     }
                     targets.append(target)
@@ -302,14 +306,26 @@ class OptimizedTrainer:
         eval_targets = []
         
         for target in targets:
+            # Use sequence data for evaluation (not the flattened data used for loss)
+            sequence_labels = target.get('sequence_labels', target['labels'])
+            sequence_boxes = target.get('sequence_boxes', target['boxes'])
+            
             # Combine all frames' annotations
             all_boxes = []
             all_labels = []
             
-            for frame_boxes, frame_labels in zip(target['boxes'], target['labels']):
-                if len(frame_boxes) > 0:
-                    all_boxes.append(frame_boxes.cpu().numpy())
-                    all_labels.append(frame_labels.cpu().numpy())
+            # Handle both sequence format (list of tensors) and flattened format (single tensor)
+            if isinstance(sequence_labels, list):
+                # Sequence format - combine all frames
+                for frame_boxes, frame_labels in zip(sequence_boxes, sequence_labels):
+                    if len(frame_boxes) > 0:
+                        all_boxes.append(frame_boxes.cpu().numpy())
+                        all_labels.append(frame_labels.cpu().numpy())
+            else:
+                # Flattened format - use directly
+                if len(sequence_boxes) > 0:
+                    all_boxes.append(sequence_boxes.cpu().numpy())
+                    all_labels.append(sequence_labels.cpu().numpy())
             
             if all_boxes:
                 combined_boxes = np.concatenate(all_boxes, axis=0)

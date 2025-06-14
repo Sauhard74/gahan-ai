@@ -21,10 +21,32 @@ def collate_sequences(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Collect targets for each sample
     targets = []
     for item in batch:
+        # Flatten sequence data for Hungarian matcher
+        all_labels = []
+        all_boxes = []
+        
+        # Combine all frames' annotations into single tensors
+        for frame_labels, frame_boxes in zip(item['labels'], item['boxes']):
+            if len(frame_labels) > 0:  # Only add if there are objects in this frame
+                all_labels.append(frame_labels)
+                all_boxes.append(frame_boxes)
+        
+        # Concatenate all frames' data
+        if all_labels:
+            combined_labels = torch.cat(all_labels, dim=0)
+            combined_boxes = torch.cat(all_boxes, dim=0)
+        else:
+            # Handle empty case
+            combined_labels = torch.tensor([], dtype=torch.long)
+            combined_boxes = torch.tensor([], dtype=torch.float32).reshape(0, 4)
+        
         target = {
-            'labels': item['labels'],  # List of tensors for each frame
-            'boxes': item['boxes'],    # List of tensors for each frame
-            'has_cutting': item['has_cutting']
+            'labels': combined_labels,  # Flattened tensor for Hungarian matcher
+            'boxes': combined_boxes,    # Flattened tensor for Hungarian matcher
+            'has_cutting': item['has_cutting'],
+            # Keep original sequence structure for other uses
+            'sequence_labels': item['labels'],  # Original list of tensors
+            'sequence_boxes': item['boxes']     # Original list of tensors
         }
         targets.append(target)
     

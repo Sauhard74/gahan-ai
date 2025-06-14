@@ -51,13 +51,34 @@ class HungarianMatcher(nn.Module):
         """
         batch_size, num_queries = outputs["pred_logits"].shape[:2]
         
+        # Handle empty targets case
+        valid_targets = []
+        for target in targets:
+            if len(target["labels"]) > 0 and len(target["boxes"]) > 0:
+                valid_targets.append(target)
+        
+        if not valid_targets:
+            # No valid targets - return empty matches for all samples
+            return [(torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64)) 
+                    for _ in range(batch_size)]
+        
         # Flatten to compute the cost matrices in a batch
         out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, num_classes]
         out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
         
         # Also concat the target labels and boxes
-        tgt_ids = torch.cat([v["labels"] for v in targets])
-        tgt_bbox = torch.cat([v["boxes"] for v in targets])
+        try:
+            tgt_ids = torch.cat([v["labels"] for v in targets if len(v["labels"]) > 0])
+            tgt_bbox = torch.cat([v["boxes"] for v in targets if len(v["boxes"]) > 0])
+        except RuntimeError as e:
+            # Handle case where all targets are empty
+            return [(torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64)) 
+                    for _ in range(batch_size)]
+        
+        if len(tgt_ids) == 0 or len(tgt_bbox) == 0:
+            # No valid targets
+            return [(torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64)) 
+                    for _ in range(batch_size)]
         
         # Compute the classification cost
         cost_class = -out_prob[:, tgt_ids]
