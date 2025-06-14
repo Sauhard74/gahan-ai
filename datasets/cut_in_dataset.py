@@ -1,5 +1,6 @@
 """
-Optimized Cut-in Dataset with ROI filtering, class balancing, and caching.
+Optimized Cut-in Dataset for Gahan AI structure.
+Each REC folder contains images and Annotations subfolder.
 """
 
 import os
@@ -16,6 +17,7 @@ import pickle
 import hashlib
 from pathlib import Path
 import logging
+import random
 
 from utils.roi_ops import filter_objects_by_roi, normalize_bbox
 
@@ -24,25 +26,30 @@ logger = logging.getLogger(__name__)
 
 class CutInSequenceDataset(Dataset):
     """
-    Dataset for cutting behavior detection with ROI filtering and class balancing.
+    Dataset for cutting behavior detection with Gahan AI structure.
+    Structure: dataset_root/Train|Test/REC_*/[images + Annotations/]
     """
     
     def __init__(self, 
-                 images_dir: str,
-                 annotations_dir: str,
+                 dataset_root: str,
+                 split: str = "Train",  # "Train" or "Test"
                  sequence_length: int = 5,
                  image_size: Tuple[int, int] = (224, 224),
                  roi_bounds: Optional[List[int]] = None,
                  oversample_positive: int = 10,
-                 augment: bool = True):
+                 augment: bool = True,
+                 val_split_ratio: float = 0.2,
+                 is_validation: bool = False):
         
-        self.images_dir = Path(images_dir)
-        self.annotations_dir = Path(annotations_dir)
+        self.dataset_root = Path(dataset_root)
+        self.split = split
         self.sequence_length = sequence_length
         self.image_size = image_size
         self.roi_bounds = roi_bounds or [480, 540, 1440, 1080]
         self.oversample_positive = oversample_positive
         self.augment = augment
+        self.val_split_ratio = val_split_ratio
+        self.is_validation = is_validation
         
         # Class mapping
         self.class_to_idx = {
@@ -52,17 +59,23 @@ class CutInSequenceDataset(Dataset):
         # Initialize transforms
         self._init_transforms()
         
-        # Load sequences
-        self.sequences = self._load_sequences()
+        # Load sequences from REC folders
+        self.sequences = self._load_sequences_from_rec_folders()
+        
+        # Split train/val if using Train split
+        if self.split == "Train":
+            self.sequences = self._split_train_val()
+        
+        # Balance classes
         self.balanced_sequences = self._balance_classes()
         
-        logger.info(f"Dataset: {len(self.balanced_sequences)} sequences")
+        logger.info(f"Dataset ({split}{'_val' if is_validation else ''}): {len(self.balanced_sequences)} sequences")
     
     def _init_transforms(self):
-        """Initialize augmentation transforms."""
-        if self.augment:
+        """Initialize image transforms."""
+        if self.augment and not self.is_validation:
             self.transform = A.Compose([
-                A.Resize(self.image_size[0], self.image_size[1]),
+                A.Resize(self.image_size[1], self.image_size[0]),
                 A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
                 A.GaussianBlur(blur_limit=3, p=0.1),
                 A.HorizontalFlip(p=0.5),
@@ -71,57 +84,153 @@ class CutInSequenceDataset(Dataset):
             ])
         else:
             self.transform = A.Compose([
-                A.Resize(self.image_size[0], self.image_size[1]),
+                A.Resize(self.image_size[1], self.image_size[0]),
                 A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                 ToTensorV2()
             ])
     
-    def _load_sequences(self) -> List[Dict]:
-        """Load all sequences."""
-        image_files = sorted(list(self.images_dir.glob('*.jpg')) + 
-                           list(self.images_dir.glob('*.png')))
+    def _load_sequences_from_rec_folders(self) -> List[Dict]:
+        """Load sequences from REC folders."""
+        split_path = self.dataset_root / self.split
+        
+        if not split_path.exists():
+            raise ValueError(f"Split path not found: {split_path}")
         
         sequences = []
-        for i in range(0, len(image_files) - self.sequence_length + 1, self.sequence_length):
-            sequence_files = image_files[i:i + self.sequence_length]
-            sequence_data = self._process_sequence(sequence_files)
-            if sequence_data:
-                sequences.append(sequence_data)
+        rec_folders = [f for f in split_path.iterdir() if f.is_dir() and f.name.startswith('REC_')]
         
+        logger.info(f"Found {len(rec_folders)} REC folders in {split_path}")
+        
+        for rec_folder in rec_folders:
+            annotations_folder = rec_folder / "Annotations"
+            
+            if not annotations_folder.exists():
+                logger.warning(f"No Annotations folder in {rec_folder}")
+                continue
+            
+            # Get all image files in Annotations folder (not REC folder)
+            image_files = []
+            for ext in ['*.jpg', '*.jpeg', '*.png', '*.JPG', '*.JPEG', '*.PNG']:
+                image_files.extend(annotations_folder.glob(ext))
+            
+            # Get all annotation files in Annotations folder
+            annotation_files = list(annotations_folder.glob('*.xml'))
+            
+            if len(image_files) == 0 or len(annotation_files) == 0:
+                logger.warning(f"No images or annotations in {annotations_folder}")
+                continue
+            
+            # Sort files by frame number
+            image_files.sort(key=lambda x: self._extract_frame_number(x.name))
+            annotation_files.sort(key=lambda x: self._extract_frame_number(x.name))
+            
+            # Create sequences of specified length
+            rec_sequences = self._create_sequences_from_folder(rec_folder, image_files, annotation_files)
+            sequences.extend(rec_sequences)
+        
+        logger.info(f"Created {len(sequences)} sequences from {len(rec_folders)} REC folders")
         return sequences
     
-    def _process_sequence(self, sequence_files: List[Path]) -> Optional[Dict]:
-        """Process a single sequence."""
+    def _extract_frame_number(self, filename: str) -> int:
+        """Extract frame number from filename like frame_000001.jpg"""
         try:
+            # Extract number from frame_XXXXXX.ext
+            parts = filename.split('_')
+            if len(parts) >= 2:
+                number_part = parts[1].split('.')[0]
+                return int(number_part)
+            return 0
+        except:
+            return 0
+    
+    def _create_sequences_from_folder(self, rec_folder: Path, image_files: List[Path], 
+                                    annotation_files: List[Path]) -> List[Dict]:
+        """Create sequences from a single REC folder."""
+        sequences = []
+        
+        # Match images with annotations (both are in Annotations folder)
+        matched_pairs = []
+        for img_file in image_files:
+            # Find corresponding annotation in same folder
+            ann_name = img_file.stem + '.xml'
+            ann_file = img_file.parent / ann_name  # Same folder as image
+            
+            if ann_file.exists():
+                matched_pairs.append((img_file, ann_file))
+        
+        if len(matched_pairs) < self.sequence_length:
+            logger.warning(f"Not enough matched pairs in {rec_folder}: {len(matched_pairs)}")
+            return sequences
+        
+        # Create overlapping sequences
+        for i in range(len(matched_pairs) - self.sequence_length + 1):
+            sequence_pairs = matched_pairs[i:i + self.sequence_length]
+            
             sequence_data = {
-                'image_paths': [str(f) for f in sequence_files],
-                'annotations': [],
+                'rec_folder': str(rec_folder),
+                'image_paths': [str(pair[0]) for pair in sequence_pairs],
+                'annotation_paths': [str(pair[1]) for pair in sequence_pairs],
                 'has_cutting': False
             }
             
-            for img_path in sequence_files:
-                ann_name = img_path.stem + '.xml'
-                ann_path = self.annotations_dir / ann_name
-                
-                if ann_path.exists():
-                    annotation = self._parse_annotation(ann_path, img_path)
-                    sequence_data['annotations'].append(annotation)
-                    
-                    if annotation and any(obj.get('cutting', False) for obj in annotation['objects']):
-                        sequence_data['has_cutting'] = True
-                else:
-                    sequence_data['annotations'].append({
-                        'image_path': str(img_path),
-                        'image_size': (1920, 1080),
-                        'objects': []
-                    })
+            # Check if any frame in sequence has cutting behavior
+            for _, ann_path in sequence_pairs:
+                if self._has_cutting_behavior(ann_path):
+                    sequence_data['has_cutting'] = True
+                    break
             
-            return sequence_data
-        except Exception as e:
-            logger.warning(f"Failed to process sequence: {e}")
-            return None
+            sequences.append(sequence_data)
+        
+        return sequences
     
-    def _parse_annotation(self, ann_path: Path, img_path: Path) -> Optional[Dict]:
+    def _has_cutting_behavior(self, ann_path: Path) -> bool:
+        """Check if annotation file contains cutting behavior."""
+        try:
+            tree = ET.parse(ann_path)
+            root = tree.getroot()
+            
+            for obj in root.findall('object'):
+                cutting_elem = obj.find('attributes/attribute[name="Cutting"]')
+                if cutting_elem is not None:
+                    cutting_value = cutting_elem.find('value')
+                    if cutting_value is not None and cutting_value.text.lower() == 'true':
+                        return True
+            return False
+        except:
+            return False
+    
+    def _split_train_val(self) -> List[Dict]:
+        """Split training data into train/val."""
+        if self.val_split_ratio == 0:
+            return self.sequences
+        
+        # Group sequences by REC folder to avoid data leakage
+        rec_groups = {}
+        for seq in self.sequences:
+            rec_folder = seq['rec_folder']
+            if rec_folder not in rec_groups:
+                rec_groups[rec_folder] = []
+            rec_groups[rec_folder].append(seq)
+        
+        # Split REC folders
+        rec_folders = list(rec_groups.keys())
+        random.shuffle(rec_folders)
+        
+        val_count = int(len(rec_folders) * self.val_split_ratio)
+        
+        if self.is_validation:
+            selected_folders = rec_folders[:val_count]
+        else:
+            selected_folders = rec_folders[val_count:]
+        
+        # Collect sequences from selected folders
+        selected_sequences = []
+        for folder in selected_folders:
+            selected_sequences.extend(rec_groups[folder])
+        
+        return selected_sequences
+    
+    def _parse_annotation(self, ann_path: Path) -> Optional[Dict]:
         """Parse XML annotation file."""
         try:
             tree = ET.parse(ann_path)
@@ -174,7 +283,6 @@ class CutInSequenceDataset(Dataset):
                 objects = filter_objects_by_roi(objects, self.roi_bounds, image_size)
             
             return {
-                'image_path': str(img_path),
                 'image_size': image_size,
                 'objects': objects
             }
@@ -188,11 +296,14 @@ class CutInSequenceDataset(Dataset):
         
         balanced_sequences = negative_sequences.copy()
         
-        # Add oversampled positive sequences
-        for _ in range(self.oversample_positive):
+        # Add oversampled positive sequences (only if not validation)
+        if not self.is_validation:
+            for _ in range(self.oversample_positive):
+                balanced_sequences.extend(positive_sequences)
+        else:
             balanced_sequences.extend(positive_sequences)
         
-        np.random.shuffle(balanced_sequences)
+        random.shuffle(balanced_sequences)
         return balanced_sequences
     
     def __len__(self) -> int:
@@ -222,7 +333,9 @@ class CutInSequenceDataset(Dataset):
             labels_list = []
             boxes_list = []
             
-            for annotation in sequence['annotations'][:self.sequence_length]:
+            for ann_path in sequence['annotation_paths'][:self.sequence_length]:
+                annotation = self._parse_annotation(Path(ann_path))
+                
                 if annotation and annotation['objects']:
                     frame_labels = [obj['class_id'] for obj in annotation['objects']]
                     frame_boxes = [normalize_bbox(obj['bbox'], annotation['image_size']) 
@@ -272,21 +385,29 @@ class CutInSequenceDataset(Dataset):
 
 def create_datasets(config: Dict) -> Tuple[Dataset, Dataset]:
     """Create train and validation datasets."""
+    dataset_root = config['paths']['dataset_root']
+    train_split = config['paths']['train_split']
+    val_split_ratio = config['paths']['val_split_ratio']
+    
     train_dataset = CutInSequenceDataset(
-        images_dir=config['train_images'],
-        annotations_dir=config['train_annotations'],
-        sequence_length=config.get('sequence_length', 5),
-        roi_bounds=config.get('roi_bounds'),
-        oversample_positive=config.get('oversample_positive', 10),
+        dataset_root=dataset_root,
+        split=train_split,
+        sequence_length=config['model']['sequence_length'],
+        roi_bounds=config['dataset']['roi_bounds'],
+        oversample_positive=config['dataset']['oversample_positive'],
+        val_split_ratio=val_split_ratio,
+        is_validation=False,
         augment=True
     )
     
     val_dataset = CutInSequenceDataset(
-        images_dir=config['val_images'],
-        annotations_dir=config['val_annotations'],
-        sequence_length=config.get('sequence_length', 5),
-        roi_bounds=config.get('roi_bounds'),
-        oversample_positive=1,
+        dataset_root=dataset_root,
+        split=train_split,
+        sequence_length=config['model']['sequence_length'],
+        roi_bounds=config['dataset']['roi_bounds'],
+        oversample_positive=1,  # No oversampling for validation
+        val_split_ratio=val_split_ratio,
+        is_validation=True,
         augment=False
     )
     

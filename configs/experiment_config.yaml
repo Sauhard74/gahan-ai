@@ -67,11 +67,11 @@ evaluation:
   target_f1: 0.85
 
 paths:
-  data_root: "data"
-  train_images: "data/train/images"
-  train_annotations: "data/train/annotations"
-  val_images: "data/val/images" 
-  val_annotations: "data/val/annotations"
+  # Actual dataset structure: each REC folder contains images + Annotations subfolder
+  dataset_root: "content/distribution"  # Root containing Train/ and Test/
+  train_split: "Train"  # Train folder containing REC_* folders
+  test_split: "Test"    # Test folder containing REC_* folders
+  val_split_ratio: 0.2  # Use 20% of train data for validation
   checkpoints: "checkpoints"
   logs: "logs"
 
