@@ -1,0 +1,82 @@
+# Gahan AI Hackathon - Cutting Behavior Detection Config
+# Optimized for F1 > 0.85 with all insights incorporated
+
+model:
+  name: "CuttingDetector"
+  backbone: "google/vit-large-patch16-224"  # ViT-Large for better performance
+  hidden_dim: 768  # Reduced from 1024 to match ViT-Large
+  num_classes: 4  # Background, Car, MotorBike, EgoVehicle
+  sequence_length: 5
+  
+  # Temporal Encoder (GRU-based as advised)
+  temporal_encoder:
+    type: "bidirectional_gru"
+    hidden_size: 384
+    num_layers: 2
+    dropout: 0.1
+    use_attention: true
+    attention_heads: 8
+  
+  # DETR-style decoder
+  decoder:
+    num_queries: 100
+    num_layers: 6
+    dropout: 0.1
+
+dataset:
+  # ROI settings for lane-cutting focus
+  roi_filter: true
+  roi_bounds: [480, 540, 1440, 1080]  # [x1, y1, x2, y2] for 1920x1080
+  
+  # Class balancing for imbalanced dataset
+  oversample_positive: 10  # 10x oversampling of cutting sequences
+  
+  # Data augmentation
+  augmentation:
+    color_jitter: 0.2
+    blur_prob: 0.1
+    horizontal_flip: 0.5
+    normalize: true
+
+training:
+  batch_size: 8
+  num_epochs: 50
+  learning_rate: 1e-4
+  weight_decay: 1e-4
+  
+  # Mixed precision for speed
+  use_amp: true
+  
+  # Loss configuration
+  loss_weights:
+    classification: 1.0
+    bbox_regression: 5.0
+    giou: 2.0
+  
+  # 10x penalty for false negatives (critical insight)
+  false_negative_penalty: 10.0
+  
+  # Optimizer
+  optimizer: "adamw"
+  scheduler: "cosine"
+  warmup_epochs: 5
+
+evaluation:
+  iou_threshold: 0.5
+  confidence_threshold: 0.3
+  target_f1: 0.85
+
+paths:
+  data_root: "data"
+  train_images: "data/train/images"
+  train_annotations: "data/train/annotations"
+  val_images: "data/val/images" 
+  val_annotations: "data/val/annotations"
+  checkpoints: "checkpoints"
+  logs: "logs"
+
+device:
+  use_cuda: true
+  num_workers: 4
+  pin_memory: true
+  non_blocking: true 
