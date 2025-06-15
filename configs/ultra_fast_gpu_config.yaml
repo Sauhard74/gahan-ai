@@ -1,0 +1,136 @@
+# ULTRA-FAST GPU Configuration
+# Maximizes 20GB GPU memory for MAXIMUM SPEED - 10 epochs with F1 0.85 target
+
+model:
+  name: "CuttingDetector"
+  backbone: "google/vit-base-patch16-224"
+  hidden_dim: 640  # INCREASED for better quality to reach F1 0.85 (was 512)
+  num_classes: 4
+  sequence_length: 3  # INCREASED for better temporal understanding
+  num_queries: 35  # INCREASED for better detection coverage (was 30)
+  
+  # Temporal Encoder - enhanced for quality
+  temporal_encoder:
+    type: "bidirectional_gru"
+    hidden_size: 320  # INCREASED for better temporal modeling (was 256)
+    num_layers: 2  # Keep 2 layers for quality
+    dropout: 0.1
+    use_attention: true  # ENABLED for better quality
+    attention_heads: 8  # INCREASED attention heads for better quality (was 4)
+  
+  # DETR-style decoder - enhanced for F1 0.85
+  decoder:
+    num_queries: 35
+    num_layers: 4  # INCREASED layers for better quality (was 3)
+    dropout: 0.1
+
+# Data configuration - MAXIMUM SPEED with quality
+data:
+  data_dir: "/content/distribution"
+  train_split: "Train"
+  val_split_ratio: 0.12  # Keep reduced for faster validation
+  image_size: [224, 224]
+  num_workers: 4  # MAXIMUM workers for speed
+  pin_memory: true
+  prefetch_factor: 4  # MAXIMUM prefetching
+  oversample_positive: 3  # INCREASED for better cutting behavior learning (was 2)
+  
+  # ROI settings
+  roi_filter: true
+  roi_bounds: [480, 540, 1440, 1080]
+  
+  # Enhanced augmentation for better generalization
+  augmentation:
+    color_jitter: 0.1   # INCREASED for better robustness (was 0.08)
+    blur_prob: 0.08     # INCREASED for better robustness (was 0.05)
+    horizontal_flip: 0.4  # INCREASED for better generalization (was 0.3)
+    rotation: 3         # ADDED rotation for better robustness
+    normalize: true
+
+# Training configuration - ULTRA-FAST 12 EPOCHS for F1 0.85
+training:
+  batch_size: 20  # SLIGHTLY REDUCED to accommodate larger model (was 24) - still ~18-19GB
+  num_epochs: 12  # INCREASED to 12 epochs for F1 0.85 (was 10)
+  learning_rate: 0.0004  # SLIGHTLY REDUCED for better convergence (was 0.0005)
+  weight_decay: 0.0001
+  
+  # GPU optimizations - MAXIMUM PERFORMANCE
+  use_amp: true  # Mixed precision for speed + memory efficiency
+  gradient_accumulation_steps: 1  # NO accumulation - direct updates for speed
+  max_grad_norm: 1.0
+  
+  # Loss configuration - OPTIMIZED FOR F1 0.85
+  loss_weights:
+    classification: 1.2  # INCREASED for better classification (was 1.0)
+    bbox_regression: 7.0  # INCREASED for better box learning (was 6.0)
+    giou: 4.0  # INCREASED for better IoU (was 3.0)
+    cutting: 5.0  # INCREASED for better cutting detection (was 4.0)
+    sequence: 4.0  # INCREASED for better temporal learning (was 3.0)
+  
+  # Optimizer settings - OPTIMIZED FOR F1 0.85
+  optimizer: "adamw"
+  scheduler_step_size: 4  # ADJUSTED for 12 epochs (was 3)
+  scheduler_gamma: 0.35   # SLIGHTLY LESS AGGRESSIVE for better convergence (was 0.4)
+  
+  # Target metrics - F1 0.85
+  target_f1: 0.85  # RESTORED to original high target
+  save_dir: "checkpoints_ultra_fast"
+
+# Evaluation settings
+evaluation:
+  iou_threshold: 0.5
+  confidence_threshold: 0.3
+  target_f1: 0.85
+
+# Device configuration - MAXIMUM UTILIZATION
+device:
+  use_cuda: true
+  num_workers: 4
+  pin_memory: true
+  non_blocking: true
+
+# Ultra-fast GPU optimizations - MAXIMUM PERFORMANCE
+gpu_optimizations:
+  enable_cudnn_benchmark: true  # Maximum speed
+  enable_tf32: true            # Enable for A100/H100 speed
+  max_memory_fraction: 0.95    # USE 19GB of 20GB - maximum utilization
+  memory_growth: true
+  
+  # Performance settings
+  gradient_checkpointing: false  # Keep disabled for maximum speed
+  empty_cache_frequency: 50     # SLIGHTLY MORE FREQUENT for larger model (was 60)
+  
+# Fallback configurations for OOM scenarios
+fallback_configs:
+  level_1:  # If OOM with batch_size=20
+    batch_size: 16
+    gradient_accumulation_steps: 1
+    num_workers: 3
+    learning_rate: 0.00035
+    hidden_dim: 512  # Reduce model size slightly
+    
+  level_2:  # If still OOM
+    batch_size: 12
+    gradient_accumulation_steps: 2  # Maintain effective batch_size=24
+    num_workers: 2
+    hidden_dim: 384
+    learning_rate: 0.0003
+    num_queries: 25  # Reduce queries
+    
+  level_3:  # Emergency fallback
+    batch_size: 8
+    gradient_accumulation_steps: 3  # Maintain effective batch_size=24
+    num_workers: 1
+    use_amp: true
+    hidden_dim: 256
+    learning_rate: 0.00025
+    num_queries: 20
+    
+# Paths
+paths:
+  dataset_root: "/content/distribution"
+  train_split: "Train"
+  test_split: "Test"
+  val_split_ratio: 0.12
+  checkpoints: "checkpoints_ultra_fast"
+  logs: "logs_ultra_fast" 

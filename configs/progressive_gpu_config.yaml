@@ -1,0 +1,152 @@
+# PROGRESSIVE GPU Configuration
+# High-power training with enhanced parallelism for 6-7 epochs to F1 0.85
+
+model:
+  name: "CuttingDetector"
+  backbone: "google/vit-base-patch16-224"
+  hidden_dim: 576  # INCREASED for more capacity (balanced)
+  num_classes: 4
+  sequence_length: 3
+  num_queries: 30  # INCREASED for better detection
+  
+  # Temporal Encoder - enhanced
+  temporal_encoder:
+    type: "bidirectional_gru"
+    hidden_size: 288  # INCREASED for more capacity
+    num_layers: 2
+    dropout: 0.12  # REDUCED for faster learning
+    use_attention: true
+    attention_heads: 6  # INCREASED for better attention
+  
+  # DETR-style decoder - enhanced
+  decoder:
+    num_queries: 30
+    num_layers: 3
+    dropout: 0.12  # REDUCED for faster learning
+
+# Data configuration - HIGH THROUGHPUT
+data:
+  data_dir: "/content/distribution"
+  train_split: "Train"
+  val_split_ratio: 0.12  # REDUCED for more training data
+  image_size: [224, 224]
+  num_workers: 6  # INCREASED for better parallelism
+  pin_memory: true
+  prefetch_factor: 6  # INCREASED for better prefetching
+  oversample_positive: 2.5  # BALANCED oversampling
+  
+  # ROI settings
+  roi_filter: true
+  roi_bounds: [480, 540, 1440, 1080]
+  
+  # Progressive augmentation for fast learning
+  augmentation:
+    color_jitter: 0.08  # INCREASED for robustness
+    blur_prob: 0.05     # MODERATE blur
+    horizontal_flip: 0.35  # INCREASED for diversity
+    normalize: true
+
+# Training configuration - PROGRESSIVE POWER for 6-7 epochs
+training:
+  batch_size: 24  # INCREASED for better GPU utilization
+  num_epochs: 7   # REDUCED for fast convergence
+  learning_rate: 0.0003  # OPTIMIZED for fast learning
+  weight_decay: 0.0001
+  
+  # GPU optimizations - HIGH PERFORMANCE
+  use_amp: true
+  gradient_accumulation_steps: 1  # No accumulation for speed
+  max_grad_norm: 0.8  # INCREASED for stability
+  
+  # Loss configuration - PROGRESSIVE LEARNING
+  loss_weights:
+    classification: 1.8  # BALANCED for good classification
+    bbox_regression: 6.0  # INCREASED for precise localization
+    giou: 3.0  # INCREASED for better IoU
+    cutting: 4.0  # INCREASED for cutting detection
+    sequence: 3.0  # INCREASED for temporal understanding
+  
+  # Optimizer settings - PROGRESSIVE CONVERGENCE
+  optimizer: "adamw"
+  scheduler_step_size: 3  # AGGRESSIVE scheduling for fast convergence
+  scheduler_gamma: 0.4   # AGGRESSIVE decay for rapid adaptation
+  
+  # Target metrics - F1 0.85 in 6-7 epochs
+  target_f1: 0.85
+  save_dir: "checkpoints_progressive"
+
+# Evaluation settings
+evaluation:
+  iou_threshold: 0.5
+  confidence_threshold: 0.28  # OPTIMIZED threshold
+  target_f1: 0.85
+
+# Device configuration - MAXIMUM PARALLELISM
+device:
+  use_cuda: true
+  num_workers: 6
+  pin_memory: true
+  non_blocking: true
+
+# Progressive GPU optimizations - MAXIMUM PERFORMANCE
+gpu_optimizations:
+  enable_cudnn_benchmark: true
+  enable_tf32: true
+  max_memory_fraction: 0.92  # INCREASED for more GPU usage
+  memory_growth: true
+  
+  # Performance settings - AGGRESSIVE
+  gradient_checkpointing: false
+  empty_cache_frequency: 30  # MORE FREQUENT cleanup
+  compile_model: true  # Enable torch.compile for speed
+  
+  # Parallel processing
+  dataloader_persistent_workers: true
+  multiprocessing_context: "spawn"
+  
+# Progressive training features
+progressive_features:
+  # Learning rate warmup for first epoch
+  warmup_epochs: 1
+  warmup_factor: 0.1
+  
+  # Progressive unfreezing
+  unfreeze_backbone_epoch: 2
+  
+  # Adaptive batch sizing
+  adaptive_batch_size: true
+  max_batch_size: 32
+  min_batch_size: 16
+  
+  # Early convergence detection
+  convergence_patience: 3
+  min_improvement: 0.02
+  
+# Fallback configurations for OOM protection
+fallback_configs:
+  level_1:  # If OOM with batch_size=24
+    batch_size: 20
+    num_workers: 5
+    learning_rate: 0.00025
+    
+  level_2:  # If still OOM
+    batch_size: 16
+    num_workers: 4
+    gradient_accumulation_steps: 2
+    learning_rate: 0.0002
+    
+  level_3:  # Emergency fallback
+    batch_size: 12
+    num_workers: 3
+    gradient_accumulation_steps: 2
+    hidden_dim: 512
+    learning_rate: 0.00015
+    
+# Paths
+paths:
+  dataset_root: "/content/distribution"
+  train_split: "Train"
+  test_split: "Test"
+  val_split_ratio: 0.12
+  checkpoints: "checkpoints_progressive"
+  logs: "logs_progressive" 

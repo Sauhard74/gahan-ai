@@ -70,6 +70,13 @@ class HungarianMatcher(nn.Module):
         try:
             tgt_ids = torch.cat([v["labels"] for v in targets if len(v["labels"]) > 0])
             tgt_bbox = torch.cat([v["boxes"] for v in targets if len(v["boxes"]) > 0])
+            
+            # Ensure target tensors are on the same device as predictions
+            if len(tgt_ids) > 0:
+                tgt_ids = tgt_ids.to(out_prob.device)
+            if len(tgt_bbox) > 0:
+                tgt_bbox = tgt_bbox.to(out_bbox.device)
+                
         except RuntimeError as e:
             # Handle case where all targets are empty
             return [(torch.tensor([], dtype=torch.int64), torch.tensor([], dtype=torch.int64)) 
@@ -153,23 +160,49 @@ class HungarianMatcher(nn.Module):
         invalid_y = fixed_boxes[:, 3] < fixed_boxes[:, 1]  # y2 < y1
         
         if invalid_x.any() or invalid_y.any():
-            print(f"Warning: Found {invalid_x.sum() + invalid_y.sum()} invalid boxes, fixing...")
+            # Only print warning if there are many invalid boxes to avoid spam
+            total_invalid = invalid_x.sum() + invalid_y.sum()
+            if total_invalid <= 5:
+                print(f"Warning: Found {total_invalid} invalid boxes, fixing...")
+            elif total_invalid <= 20:
+                print(f"Warning: Found {total_invalid} invalid boxes, fixing... (reduced logging)")
+            # Don't print for very large numbers to avoid spam
             
-            # Fix x coordinates: swap if x2 < x1
+            # Fix x coordinates: swap if x2 < x1 WITHOUT in-place operations
             if invalid_x.any():
-                temp = fixed_boxes[invalid_x, 0].clone()
-                fixed_boxes[invalid_x, 0] = fixed_boxes[invalid_x, 2]
-                fixed_boxes[invalid_x, 2] = temp
+                x1_vals = fixed_boxes[:, 0]
+                x2_vals = fixed_boxes[:, 2]
+                # Create new tensor with swapped values where needed
+                new_x1 = torch.where(invalid_x, x2_vals, x1_vals)
+                new_x2 = torch.where(invalid_x, x1_vals, x2_vals)
+                fixed_boxes = torch.cat([
+                    new_x1.unsqueeze(1),
+                    fixed_boxes[:, 1:2],
+                    new_x2.unsqueeze(1),
+                    fixed_boxes[:, 3:4]
+                ], dim=1)
             
-            # Fix y coordinates: swap if y2 < y1  
+            # Fix y coordinates: swap if y2 < y1 WITHOUT in-place operations
             if invalid_y.any():
-                temp = fixed_boxes[invalid_y, 1].clone()
-                fixed_boxes[invalid_y, 1] = fixed_boxes[invalid_y, 3]
-                fixed_boxes[invalid_y, 3] = temp
+                y1_vals = fixed_boxes[:, 1]
+                y2_vals = fixed_boxes[:, 3]
+                # Create new tensor with swapped values where needed
+                new_y1 = torch.where(invalid_y, y2_vals, y1_vals)
+                new_y2 = torch.where(invalid_y, y1_vals, y2_vals)
+                fixed_boxes = torch.cat([
+                    fixed_boxes[:, 0:1],
+                    new_y1.unsqueeze(1),
+                    fixed_boxes[:, 2:3],
+                    new_y2.unsqueeze(1)
+                ], dim=1)
         
-        # Ensure minimum box size
+        # Ensure minimum box size WITHOUT in-place operations
         min_size = 1e-6
-        fixed_boxes[:, 2:] = torch.maximum(fixed_boxes[:, 2:], fixed_boxes[:, :2] + min_size)
+        x1, y1, x2, y2 = fixed_boxes[:, 0], fixed_boxes[:, 1], fixed_boxes[:, 2], fixed_boxes[:, 3]
+        new_x2 = torch.maximum(x2, x1 + min_size)
+        new_y2 = torch.maximum(y2, y1 + min_size)
+        
+        fixed_boxes = torch.stack([x1, y1, new_x2, new_y2], dim=1)
         
         return fixed_boxes
     

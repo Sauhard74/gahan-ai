@@ -9,6 +9,78 @@ import torch.nn.functional as F
 from typing import Dict, List, Tuple
 from utils.hungarian_matcher import HungarianMatcher
 
+# Import the GIoU function directly
+def generalized_box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
+    """
+    Compute Generalized IoU (GIoU) between two sets of boxes.
+    
+    Args:
+        boxes1: [N, 4] boxes in format [x1, y1, x2, y2]
+        boxes2: [M, 4] boxes in format [x1, y1, x2, y2]
+        
+    Returns:
+        [N, M] GIoU matrix
+    """
+    # Handle empty inputs
+    if len(boxes1) == 0 or len(boxes2) == 0:
+        return torch.empty((len(boxes1), len(boxes2)), device=boxes1.device if len(boxes1) > 0 else boxes2.device)
+    
+    # Ensure both tensors are on the same device
+    if boxes1.device != boxes2.device:
+        boxes2 = boxes2.to(boxes1.device)
+    
+    # Fix invalid boxes
+    boxes1 = _fix_invalid_boxes(boxes1)
+    boxes2 = _fix_invalid_boxes(boxes2)
+    
+    # Compute regular IoU and union
+    iou, union = _box_iou(boxes1, boxes2)
+    
+    # Compute enclosing box
+    lt = torch.min(boxes1[:, None, :2], boxes2[:, :2])  # [N, M, 2]
+    rb = torch.max(boxes1[:, None, 2:], boxes2[:, 2:])  # [N, M, 2]
+    
+    wh = (rb - lt).clamp(min=0)  # [N, M, 2]
+    area_enclosing = wh[:, :, 0] * wh[:, :, 1]  # [N, M]
+    
+    # Compute GIoU
+    giou = iou - (area_enclosing - union) / (area_enclosing + 1e-7)
+    
+    return giou
+
+def _fix_invalid_boxes(boxes: torch.Tensor) -> torch.Tensor:
+    """Fix invalid bounding boxes where x2 < x1 or y2 < y1."""
+    if len(boxes) == 0:
+        return boxes
+    
+    # Work on a copy to avoid in-place operations
+    x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    
+    # Ensure x2 >= x1 and y2 >= y1 WITHOUT in-place operations
+    fixed_x2 = torch.maximum(x2, x1 + 1e-6)
+    fixed_y2 = torch.maximum(y2, y1 + 1e-6)
+    
+    # Create new tensor with fixed coordinates
+    fixed = torch.stack([x1, y1, fixed_x2, fixed_y2], dim=1)
+    
+    return fixed
+
+def _box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> tuple:
+    """Compute IoU and union between two sets of boxes."""
+    area1 = (boxes1[:, 2] - boxes1[:, 0]) * (boxes1[:, 3] - boxes1[:, 1])
+    area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
+    
+    lt = torch.max(boxes1[:, None, :2], boxes2[:, :2])  # [N, M, 2]
+    rb = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])  # [N, M, 2]
+    
+    wh = (rb - lt).clamp(min=0)  # [N, M, 2]
+    inter = wh[:, :, 0] * wh[:, :, 1]  # [N, M]
+    
+    union = area1[:, None] + area2 - inter
+    iou = inter / (union + 1e-7)
+    
+    return iou, union
+
 class FocalLoss(nn.Module):
     """
     Focal Loss for addressing class imbalance.
@@ -62,16 +134,16 @@ class GIoULoss(nn.Module):
             print(f"⚠️ Empty boxes detected: pred={len(pred_boxes)}, target={len(target_boxes)}")
             return torch.zeros(1, device=pred_boxes.device if len(pred_boxes) > 0 else target_boxes.device)
         
-        # Validate box format and fix if needed
-        invalid_pred = self._validate_and_fix_boxes(pred_boxes, "predictions")
-        invalid_target = self._validate_and_fix_boxes(target_boxes, "targets")
+        # Validate box format and fix if needed - return fixed boxes
+        pred_boxes_fixed, invalid_pred = self._validate_and_fix_boxes(pred_boxes, "predictions")
+        target_boxes_fixed, invalid_target = self._validate_and_fix_boxes(target_boxes, "targets")
         
         if invalid_pred > 0 or invalid_target > 0:
             print(f"Warning: Found {invalid_pred + invalid_target} invalid boxes, fixing...")
         
         try:
-            # Compute GIoU loss
-            giou_loss = 1 - generalized_box_iou(pred_boxes, target_boxes).diag()
+            # Compute GIoU loss using fixed boxes
+            giou_loss = 1 - generalized_box_iou(pred_boxes_fixed, target_boxes_fixed).diag()
             
             # Clamp to ensure non-negative values
             giou_loss = torch.clamp(giou_loss, min=0.0)
@@ -82,20 +154,32 @@ class GIoULoss(nn.Module):
             print(f"❌ Error computing GIoU loss: {e}")
             return torch.zeros(1, device=pred_boxes.device, requires_grad=True)
     
-    def _validate_and_fix_boxes(self, boxes: torch.Tensor, box_type: str) -> int:
-        """Validate and fix box format."""
+    def _validate_and_fix_boxes(self, boxes: torch.Tensor, box_type: str) -> tuple:
+        """Validate and fix box format WITHOUT in-place operations."""
         invalid_boxes = 0
+        fixed_boxes = boxes.clone()  # Work on a copy
+        
         for i in range(boxes.shape[0]):
             x1, y1, x2, y2 = boxes[i]
             if x1 > x2 or y1 > y2:
-                print(f"Warning: {box_type} box {i} has incorrect format: {boxes[i]}")
+                # Only print warning for first few invalid boxes to avoid spam
+                if invalid_boxes < 3:
+                    print(f"Warning: {box_type} box {i} has incorrect format: {boxes[i]}")
                 invalid_boxes += 1
-                boxes[i] = torch.clamp(boxes[i], min=0.0)
-        return invalid_boxes
+                # Fix without in-place operation
+                clamped_box = torch.clamp(boxes[i], min=0.0)
+                fixed_boxes[i] = clamped_box
+        
+        # Only print summary if there were many invalid boxes
+        if invalid_boxes > 3:
+            print(f"Warning: Found {invalid_boxes} total invalid {box_type} boxes (showing first 3)")
+        
+        return fixed_boxes, invalid_boxes
 
 class WeightedBCELoss(nn.Module):
     """
     Weighted Binary Cross Entropy with 10x penalty for false negatives.
+    Uses BCEWithLogitsLoss for autocast compatibility.
     """
     
     def __init__(self, false_negative_penalty: float = 10.0):
@@ -105,22 +189,26 @@ class WeightedBCELoss(nn.Module):
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            inputs: [N] predicted probabilities (after sigmoid)
+            inputs: [N] predicted logits (before sigmoid)
             targets: [N] binary targets (0 or 1)
             
         Returns:
             Weighted BCE loss
         """
-        # Standard BCE loss
-        bce_loss = F.binary_cross_entropy(inputs, targets, reduction='none')
+        # Use BCEWithLogitsLoss for autocast compatibility
+        bce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
         
         # Apply penalty for false negatives
-        # False negative: target=1, prediction<0.5
-        false_negative_mask = (targets == 1) & (inputs < 0.5)
+        # Convert logits to probabilities for masking
+        probs = torch.sigmoid(inputs)
+        false_negative_mask = (targets == 1) & (probs < 0.5)
         
-        # Apply penalty
-        weighted_loss = bce_loss.clone()
-        weighted_loss[false_negative_mask] *= self.false_negative_penalty
+        # Apply penalty WITHOUT in-place operation
+        penalty_weights = torch.ones_like(bce_loss)
+        penalty_weights = torch.where(false_negative_mask, 
+                                    penalty_weights * self.false_negative_penalty, 
+                                    penalty_weights)
+        weighted_loss = bce_loss * penalty_weights
         
         return weighted_loss.mean()
 
@@ -276,7 +364,9 @@ class CuttingDetectionLoss(nn.Module):
         for i, (src_idx, tgt_idx) in enumerate(indices):
             if len(src_idx) > 0:
                 src_boxes.append(pred_boxes[i][src_idx])
-                target_boxes.append(targets[i]['boxes'][tgt_idx])
+                # Ensure target boxes are on the same device
+                target_box = targets[i]['boxes'][tgt_idx].to(pred_boxes.device)
+                target_boxes.append(target_box)
         
         if len(src_boxes) == 0:
             return torch.tensor(0.0, device=pred_boxes.device, requires_grad=True)
@@ -301,7 +391,9 @@ class CuttingDetectionLoss(nn.Module):
         for i, (src_idx, tgt_idx) in enumerate(indices):
             if len(src_idx) > 0:
                 src_boxes.append(pred_boxes[i][src_idx])
-                target_boxes.append(targets[i]['boxes'][tgt_idx])
+                # Ensure target boxes are on the same device
+                target_box = targets[i]['boxes'][tgt_idx].to(pred_boxes.device)
+                target_boxes.append(target_box)
         
         if len(src_boxes) == 0:
             return torch.tensor(0.0, device=pred_boxes.device, requires_grad=True)
@@ -326,8 +418,10 @@ class CuttingDetectionLoss(nn.Module):
         for i, (src_idx, tgt_idx) in enumerate(indices):
             if len(src_idx) > 0:
                 src_cutting.append(pred_cutting[i][src_idx].squeeze(-1))
-                # Extract cutting labels from targets
-                cutting_labels = targets[i].get('cutting', torch.zeros(len(tgt_idx)))
+                # Extract cutting labels from targets and ensure correct device
+                cutting_labels = targets[i].get('cutting', torch.zeros(len(tgt_idx), device=pred_cutting.device))
+                if cutting_labels.device != pred_cutting.device:
+                    cutting_labels = cutting_labels.to(pred_cutting.device)
                 target_cutting.append(cutting_labels)
         
         if len(src_cutting) == 0:
@@ -336,11 +430,8 @@ class CuttingDetectionLoss(nn.Module):
         src_cutting = torch.cat(src_cutting, dim=0)
         target_cutting = torch.cat(target_cutting, dim=0).float()
         
-        # Apply sigmoid to predictions
-        src_cutting_prob = torch.sigmoid(src_cutting)
-        
-        # Weighted BCE loss with false negative penalty
-        loss_cutting = self.weighted_bce(src_cutting_prob, target_cutting)
+        # Use logits directly (don't apply sigmoid here)
+        loss_cutting = self.weighted_bce(src_cutting, target_cutting)
         
         return loss_cutting
     
@@ -356,11 +447,8 @@ class CuttingDetectionLoss(nn.Module):
         
         target_sequence = torch.tensor(target_sequence, device=pred_sequence.device, dtype=torch.float32)
         
-        # Apply sigmoid to predictions
-        pred_sequence_prob = torch.sigmoid(pred_sequence.squeeze(-1))
-        
-        # Use standard BCE loss instead of weighted BCE for sequence level
-        loss_sequence = F.binary_cross_entropy(pred_sequence_prob, target_sequence)
+        # Use BCEWithLogitsLoss for autocast compatibility
+        loss_sequence = F.binary_cross_entropy_with_logits(pred_sequence.squeeze(-1), target_sequence)
         
         return loss_sequence
 

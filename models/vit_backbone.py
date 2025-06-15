@@ -19,7 +19,7 @@ class SpatialAttention(nn.Module):
         
         self.fc = nn.Sequential(
             nn.Linear(in_channels, in_channels // reduction, bias=False),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Linear(in_channels // reduction, in_channels, bias=False)
         )
         
@@ -77,7 +77,7 @@ class ViTBackbone(nn.Module):
         self.feature_enhancer = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Dropout(0.1),
             nn.Linear(hidden_dim, hidden_dim)
         )
@@ -181,7 +181,7 @@ class MultiScaleViTBackbone(nn.Module):
         self.scale_fusion = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Dropout(0.1)
         )
         

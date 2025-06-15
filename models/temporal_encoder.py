@@ -129,7 +129,7 @@ class BidirectionalGRUEncoder(nn.Module):
         # Feed-forward network
         self.ffn = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 4),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim * 4, hidden_dim)
         )
@@ -282,7 +282,7 @@ class HybridTemporalEncoder(nn.Module):
         self.fusion = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Dropout(dropout)
         )
         

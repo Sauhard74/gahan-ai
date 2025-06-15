@@ -1,0 +1,98 @@
+# FAST GPU training configuration
+# Optimized to complete training in under 8 hours
+
+model:
+  name: "CuttingDetector"
+  backbone: "google/vit-base-patch16-224"  # Keep base model
+  hidden_dim: 256  # Reasonable size
+  num_classes: 4  # Background, Car, MotorBike, EgoVehicle
+  sequence_length: 2  # Keep short
+  num_queries: 15  # Reduced from 20 to 15
+  
+  # Temporal Encoder - minimal for speed
+  temporal_encoder:
+    type: "bidirectional_gru"
+    hidden_size: 128
+    num_layers: 1  # Single layer
+    dropout: 0.1
+    use_attention: false  # Disabled for speed
+    attention_heads: 2
+  
+  # DETR-style decoder - minimal
+  decoder:
+    num_queries: 15  # Reduced
+    num_layers: 2  # Keep minimal
+    dropout: 0.1
+
+# Data configuration - SPEED OPTIMIZED
+data:
+  data_dir: "/content/distribution"
+  train_split: "Train"
+  val_split_ratio: 0.15  # Reduced validation set (was 0.2)
+  image_size: [224, 224]
+  num_workers: 0  # Single-threaded for stability
+  pin_memory: false
+  prefetch_factor: 1
+  oversample_positive: 1  # No oversampling to reduce dataset size
+  
+  # ROI settings
+  roi_filter: true
+  roi_bounds: [480, 540, 1440, 1080]
+  
+  # Minimal augmentation for speed
+  augmentation:
+    color_jitter: 0.02  # Reduced
+    blur_prob: 0.01     # Reduced
+    horizontal_flip: 0.1  # Reduced
+    normalize: true
+
+# Training configuration - SPEED OPTIMIZED
+training:
+  batch_size: 4  # INCREASED from 2 to 4 (2x speedup)
+  num_epochs: 15  # REDUCED from 30 to 15 (2x speedup)
+  learning_rate: 0.0002  # Slightly higher for faster convergence
+  weight_decay: 0.0001
+  
+  # Speed optimizations
+  use_amp: false  # Keep disabled for stability
+  gradient_accumulation_steps: 4  # Reduced from 8 (simulate batch_size=16)
+  max_grad_norm: 1.0
+  
+  # Loss configuration
+  loss_weights:
+    classification: 1.0
+    bbox_regression: 5.0
+    giou: 2.0
+    cutting: 3.0
+    sequence: 2.0
+  
+  # Optimizer settings
+  optimizer: "adamw"
+  scheduler_step_size: 5  # More frequent LR drops
+  scheduler_gamma: 0.3   # Bigger LR drops
+  
+  # Target metrics - slightly lower for speed
+  target_f1: 0.80  # Reduced from 0.85
+  save_dir: "checkpoints_fast"
+
+# Evaluation settings
+evaluation:
+  iou_threshold: 0.5
+  confidence_threshold: 0.3
+  target_f1: 0.80
+
+# Device configuration
+device:
+  use_cuda: true
+  num_workers: 0
+  pin_memory: false
+  non_blocking: false
+
+# Paths
+paths:
+  dataset_root: "/content/distribution"
+  train_split: "Train"
+  test_split: "Test"
+  val_split_ratio: 0.15
+  checkpoints: "checkpoints_fast"
+  logs: "logs_fast" 

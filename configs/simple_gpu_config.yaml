@@ -1,0 +1,98 @@
+# Simple GPU training configuration
+# Single-threaded, synchronous processing for maximum stability
+
+model:
+  name: "CuttingDetector"
+  backbone: "google/vit-base-patch16-224"  # Base model for stability
+  hidden_dim: 256  # Reasonable size
+  num_classes: 4  # Background, Car, MotorBike, EgoVehicle
+  sequence_length: 2  # Short sequences
+  num_queries: 20  # Moderate number
+  
+  # Temporal Encoder - simple
+  temporal_encoder:
+    type: "bidirectional_gru"
+    hidden_size: 128  # Moderate size
+    num_layers: 1  # Single layer for simplicity
+    dropout: 0.1
+    use_attention: false  # Disabled for simplicity
+    attention_heads: 2
+  
+  # DETR-style decoder - simple
+  decoder:
+    num_queries: 20
+    num_layers: 2  # Minimal layers
+    dropout: 0.1
+
+# Data configuration - single-threaded
+data:
+  data_dir: "/content/distribution"
+  train_split: "Train"
+  val_split_ratio: 0.2
+  image_size: [224, 224]
+  num_workers: 0  # Single-threaded data loading
+  pin_memory: false  # Disabled for simplicity
+  prefetch_factor: 1  # No prefetching
+  oversample_positive: 1  # No oversampling
+  
+  # ROI settings
+  roi_filter: true
+  roi_bounds: [480, 540, 1440, 1080]
+  
+  # Simple augmentation
+  augmentation:
+    color_jitter: 0.05
+    blur_prob: 0.02
+    horizontal_flip: 0.2
+    normalize: true
+
+# Training configuration - simple GPU
+training:
+  batch_size: 2  # Small batch size for stability
+  num_epochs: 30
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  
+  # Simple training settings
+  use_amp: false  # Disabled for stability
+  gradient_accumulation_steps: 8  # Simulate larger batch
+  max_grad_norm: 1.0
+  
+  # Loss configuration
+  loss_weights:
+    classification: 1.0
+    bbox_regression: 5.0
+    giou: 2.0
+    cutting: 3.0
+    sequence: 2.0
+  
+  # Optimizer settings
+  optimizer: "adamw"
+  scheduler_step_size: 10
+  scheduler_gamma: 0.1
+  
+  # Target metrics
+  target_f1: 0.85
+  save_dir: "checkpoints_simple"
+
+# Evaluation settings
+evaluation:
+  iou_threshold: 0.5
+  confidence_threshold: 0.3
+  target_f1: 0.85
+
+# Device configuration - simple GPU
+device:
+  use_cuda: true
+  num_workers: 0  # Single-threaded
+  pin_memory: false  # Disabled
+  non_blocking: false  # Synchronous transfers
+
+# Paths
+paths:
+  dataset_root: "/content/distribution"
+  train_split: "Train"
+  test_split: "Test"
+  val_split_ratio: 0.2
+  checkpoints: "checkpoints_simple"
+  logs: "logs_simple" 

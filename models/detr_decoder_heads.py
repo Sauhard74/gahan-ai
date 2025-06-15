@@ -41,7 +41,7 @@ class DETRDecoderLayer(nn.Module):
         # Feed-forward network
         self.ffn = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 4),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim * 4, hidden_dim)
         )
@@ -121,7 +121,11 @@ class CuttingDetectionHeads(nn.Module):
         self.num_queries = num_queries
         
         # Classification head
-        self.class_embed = nn.Linear(hidden_dim, num_classes)
+        self.class_head = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(inplace=False),
+            nn.Linear(hidden_dim, num_classes)
+        )
         
         # Bounding box regression head
         self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
@@ -129,7 +133,7 @@ class CuttingDetectionHeads(nn.Module):
         # Cutting behavior head
         self.cutting_embed = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Dropout(0.1),
             nn.Linear(hidden_dim // 2, 1)
         )
@@ -146,10 +150,33 @@ class CuttingDetectionHeads(nn.Module):
             Dictionary with predictions
         """
         # Classification logits
-        class_logits = self.class_embed(decoder_output)  # [B, num_queries, num_classes]
+        class_logits = self.class_head(decoder_output)  # [B, num_queries, num_classes]
         
-        # Bounding box coordinates (normalized)
-        bbox_coords = self.bbox_embed(decoder_output).sigmoid()  # [B, num_queries, 4]
+        # Bounding box coordinates - use center-width-height parameterization
+        bbox_raw = self.bbox_embed(decoder_output)  # [B, num_queries, 4]
+        
+        # Split into center coordinates and dimensions
+        center_x = torch.sigmoid(bbox_raw[..., 0])  # [0, 1]
+        center_y = torch.sigmoid(bbox_raw[..., 1])  # [0, 1]
+        width = torch.sigmoid(bbox_raw[..., 2])     # [0, 1]
+        height = torch.sigmoid(bbox_raw[..., 3])    # [0, 1]
+        
+        # Convert to x1, y1, x2, y2 format ensuring valid boxes
+        half_width = width / 2
+        half_height = height / 2
+        
+        x1 = torch.clamp(center_x - half_width, min=0.0, max=1.0)
+        y1 = torch.clamp(center_y - half_height, min=0.0, max=1.0)
+        x2 = torch.clamp(center_x + half_width, min=0.0, max=1.0)
+        y2 = torch.clamp(center_y + half_height, min=0.0, max=1.0)
+        
+        # Ensure x2 > x1 and y2 > y1 with minimum box size
+        min_size = 0.01  # 1% of image size
+        x2 = torch.maximum(x2, x1 + min_size)
+        y2 = torch.maximum(y2, y1 + min_size)
+        
+        # Stack to create final bbox coordinates
+        bbox_coords = torch.stack([x1, y1, x2, y2], dim=-1)  # [B, num_queries, 4]
         
         # Cutting behavior probability
         cutting_logits = self.cutting_embed(decoder_output)  # [B, num_queries, 1]
@@ -176,11 +203,11 @@ class SequenceCuttingHead(nn.Module):
         self.sequence_classifier = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.LayerNorm(hidden_dim // 2),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Dropout(0.2),
             nn.Linear(hidden_dim // 2, hidden_dim // 4),
             nn.LayerNorm(hidden_dim // 4),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Dropout(0.1),
             nn.Linear(hidden_dim // 4, 1)
         )
@@ -251,7 +278,7 @@ class AdaptiveQueryGenerator(nn.Module):
         self.query_adapter = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Linear(hidden_dim, hidden_dim)
         )
         

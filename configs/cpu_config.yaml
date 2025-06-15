@@ -1,59 +1,64 @@
-# Ultra-conservative config for 30GB GPU memory limit
+# CPU-only training configuration
+# Optimized for training without CUDA complexities
+
+# Force CPU mode
+force_cpu: true
+
 model:
   name: "CuttingDetector"
-  backbone: "google/vit-base-patch16-224"  # Keep base model
-  hidden_dim: 256  # Conservative size
+  backbone: "google/vit-base-patch16-224"  # Base model for CPU
+  hidden_dim: 128  # Smaller for CPU
   num_classes: 4  # Background, Car, MotorBike, EgoVehicle
   sequence_length: 2  # Minimal sequence length
-  num_queries: 20  # Reduced from 25 to 20
+  num_queries: 10  # Reduced for CPU
   
-  # Temporal Encoder - minimal
+  # Temporal Encoder - minimal for CPU
   temporal_encoder:
     type: "bidirectional_gru"
-    hidden_size: 128  # Conservative size
+    hidden_size: 64  # Small for CPU
     num_layers: 1  # Single layer
     dropout: 0.1
-    use_attention: false  # Disabled to save memory
+    use_attention: false  # Disabled to save computation
     attention_heads: 2
   
-  # DETR-style decoder - minimal
+  # DETR-style decoder - minimal for CPU
   decoder:
-    num_queries: 20  # Reduced from 25 to 20
+    num_queries: 10  # Reduced for CPU
     num_layers: 2  # Minimal layers
     dropout: 0.1
 
-# Data configuration - ultra conservative
+# Data configuration - CPU optimized
 data:
   data_dir: "/content/distribution"
   train_split: "Train"
   val_split_ratio: 0.2
   image_size: [224, 224]
-  num_workers: 1  # Single worker for memory control
-  pin_memory: false  # Disabled to save memory
+  num_workers: 2  # Limited workers for CPU
+  pin_memory: false  # Not needed for CPU
   prefetch_factor: 1  # Minimal prefetching
-  oversample_positive: 1  # No oversampling to reduce dataset size
+  oversample_positive: 1  # No oversampling
   
   # ROI settings for lane-cutting focus
   roi_filter: true
   roi_bounds: [480, 540, 1440, 1080]
   
-  # Data augmentation - minimal
+  # Data augmentation - minimal for CPU
   augmentation:
     color_jitter: 0.05
     blur_prob: 0.02
     horizontal_flip: 0.2
     normalize: true
 
-# Training configuration - 30GB GPU memory controlled
+# Training configuration - CPU optimized
 training:
-  batch_size: 1  # Ultra-conservative batch size
-  num_epochs: 50
+  batch_size: 1  # Small batch for CPU
+  num_epochs: 20  # Fewer epochs for testing
   learning_rate: 0.0001
   weight_decay: 0.0001
   
-  # GPU optimizations for memory efficiency
-  use_amp: false  # Disabled for memory stability
-  gradient_accumulation_steps: 16  # Simulate larger batch size
+  # CPU optimizations
+  use_amp: false  # Not supported on CPU
+  gradient_accumulation_steps: 8  # Simulate larger batch
   max_grad_norm: 1.0
   
   # Loss configuration
@@ -66,31 +71,31 @@ training:
   
   # Optimizer settings
   optimizer: "adamw"
-  scheduler_step_size: 15
+  scheduler_step_size: 10
   scheduler_gamma: 0.1
   
   # Target metrics
-  target_f1: 0.85
-  save_dir: "checkpoints"
+  target_f1: 0.80  # Lower target for CPU testing
+  save_dir: "checkpoints_cpu"
 
 # Evaluation settings
 evaluation:
   iou_threshold: 0.5
   confidence_threshold: 0.3
-  target_f1: 0.85
+  target_f1: 0.80
 
-# Device configuration
+# Device configuration - CPU only
 device:
-  use_cuda: true
-  num_workers: 4
-  pin_memory: true
-  non_blocking: true
+  use_cuda: false
+  num_workers: 2
+  pin_memory: false
+  non_blocking: false
 
-# Paths (legacy - keeping for compatibility)
+# Paths
 paths:
   dataset_root: "/content/distribution"
   train_split: "Train"
   test_split: "Test"
   val_split_ratio: 0.2
-  checkpoints: "checkpoints"
-  logs: "logs" 
+  checkpoints: "checkpoints_cpu"
+  logs: "logs_cpu" 

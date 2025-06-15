@@ -1,0 +1,132 @@
+# RESCUE GPU Configuration
+# Balanced approach: Fast training with stable learning for F1 0.85
+
+model:
+  name: "CuttingDetector"
+  backbone: "google/vit-base-patch16-224"
+  hidden_dim: 512  # REDUCED for stability (was 640)
+  num_classes: 4
+  sequence_length: 3
+  num_queries: 25  # REDUCED for stability (was 35)
+  
+  # Temporal Encoder - balanced
+  temporal_encoder:
+    type: "bidirectional_gru"
+    hidden_size: 256  # REDUCED for stability (was 320)
+    num_layers: 2
+    dropout: 0.15  # INCREASED dropout for regularization (was 0.1)
+    use_attention: true
+    attention_heads: 4  # REDUCED for stability (was 8)
+  
+  # DETR-style decoder - balanced
+  decoder:
+    num_queries: 25
+    num_layers: 3  # REDUCED for stability (was 4)
+    dropout: 0.15  # INCREASED dropout
+
+# Data configuration - STABLE LEARNING
+data:
+  data_dir: "/content/distribution"
+  train_split: "Train"
+  val_split_ratio: 0.15  # INCREASED for better validation (was 0.12)
+  image_size: [224, 224]
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 4
+  oversample_positive: 2  # REDUCED for balance (was 3)
+  
+  # ROI settings
+  roi_filter: true
+  roi_bounds: [480, 540, 1440, 1080]
+  
+  # Moderate augmentation for stability
+  augmentation:
+    color_jitter: 0.05  # REDUCED for stability (was 0.1)
+    blur_prob: 0.03     # REDUCED for stability (was 0.08)
+    horizontal_flip: 0.3  # REDUCED for stability (was 0.4)
+    normalize: true
+
+# Training configuration - STABLE LEARNING for F1 0.85
+training:
+  batch_size: 16  # REDUCED for stability (was 20)
+  num_epochs: 15  # INCREASED for more learning time (was 12)
+  learning_rate: 0.0002  # REDUCED for stability (was 0.0004)
+  weight_decay: 0.0001
+  
+  # GPU optimizations - STABLE APPROACH
+  use_amp: true
+  gradient_accumulation_steps: 1
+  max_grad_norm: 0.5  # REDUCED for stability (was 1.0)
+  
+  # Loss configuration - BALANCED for stable learning
+  loss_weights:
+    classification: 2.0  # INCREASED for better classification (was 1.2)
+    bbox_regression: 5.0  # REDUCED for balance (was 7.0)
+    giou: 2.0  # REDUCED for balance (was 4.0)
+    cutting: 3.0  # REDUCED for balance (was 5.0)
+    sequence: 2.0  # REDUCED for balance (was 4.0)
+  
+  # Optimizer settings - STABLE CONVERGENCE
+  optimizer: "adamw"
+  scheduler_step_size: 5  # INCREASED for stability (was 4)
+  scheduler_gamma: 0.5   # LESS AGGRESSIVE for stability (was 0.35)
+  
+  # Target metrics - F1 0.85
+  target_f1: 0.85
+  save_dir: "checkpoints_rescue"
+
+# Evaluation settings
+evaluation:
+  iou_threshold: 0.5
+  confidence_threshold: 0.25  # REDUCED for more detections (was 0.3)
+  target_f1: 0.85
+
+# Device configuration
+device:
+  use_cuda: true
+  num_workers: 4
+  pin_memory: true
+  non_blocking: true
+
+# Rescue GPU optimizations - STABLE PERFORMANCE
+gpu_optimizations:
+  enable_cudnn_benchmark: true
+  enable_tf32: true
+  max_memory_fraction: 0.90  # REDUCED for stability (was 0.95)
+  memory_growth: true
+  
+  # Performance settings
+  gradient_checkpointing: false
+  empty_cache_frequency: 40
+  
+# Fallback configurations
+fallback_configs:
+  level_1:  # If OOM with batch_size=16
+    batch_size: 12
+    gradient_accumulation_steps: 1
+    num_workers: 3
+    learning_rate: 0.00015
+    
+  level_2:  # If still OOM
+    batch_size: 8
+    gradient_accumulation_steps: 2
+    num_workers: 2
+    hidden_dim: 384
+    learning_rate: 0.0001
+    
+  level_3:  # Emergency fallback
+    batch_size: 4
+    gradient_accumulation_steps: 4
+    num_workers: 1
+    use_amp: true
+    hidden_dim: 256
+    learning_rate: 0.00008
+    
+# Paths
+paths:
+  dataset_root: "/content/distribution"
+  train_split: "Train"
+  test_split: "Test"
+  val_split_ratio: 0.15
+  checkpoints: "checkpoints_rescue"
+  logs: "logs_rescue" 

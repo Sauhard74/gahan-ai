@@ -128,4 +128,71 @@ def adjust_bbox_for_roi(bbox: List[float], roi_bounds: List[int]) -> List[float]
     adj_x2 = min(roi_x2 - roi_x1, x2 - roi_x1)
     adj_y2 = min(roi_y2 - roi_y1, y2 - roi_y1)
     
-    return [adj_x1, adj_y1, adj_x2, adj_y2] 
+    return [adj_x1, adj_y1, adj_x2, adj_y2]
+
+def generalized_box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> torch.Tensor:
+    """
+    Compute Generalized IoU (GIoU) between two sets of boxes.
+    
+    Args:
+        boxes1: [N, 4] boxes in format [x1, y1, x2, y2]
+        boxes2: [M, 4] boxes in format [x1, y1, x2, y2]
+        
+    Returns:
+        [N, M] GIoU matrix
+    """
+    # Handle empty inputs
+    if len(boxes1) == 0 or len(boxes2) == 0:
+        return torch.empty((len(boxes1), len(boxes2)), device=boxes1.device if len(boxes1) > 0 else boxes2.device)
+    
+    # Fix invalid boxes
+    boxes1 = _fix_invalid_boxes(boxes1)
+    boxes2 = _fix_invalid_boxes(boxes2)
+    
+    # Compute regular IoU and union
+    iou, union = _box_iou(boxes1, boxes2)
+    
+    # Compute enclosing box
+    lt = torch.min(boxes1[:, None, :2], boxes2[:, :2])  # [N, M, 2]
+    rb = torch.max(boxes1[:, None, 2:], boxes2[:, 2:])  # [N, M, 2]
+    
+    wh = (rb - lt).clamp(min=0)  # [N, M, 2]
+    area_enclosing = wh[:, :, 0] * wh[:, :, 1]  # [N, M]
+    
+    # Compute GIoU
+    giou = iou - (area_enclosing - union) / (area_enclosing + 1e-7)
+    
+    return giou
+
+def _fix_invalid_boxes(boxes: torch.Tensor) -> torch.Tensor:
+    """Fix invalid bounding boxes where x2 < x1 or y2 < y1."""
+    if len(boxes) == 0:
+        return boxes
+    
+    # Work on a copy to avoid in-place operations
+    x1, y1, x2, y2 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    
+    # Ensure x2 >= x1 and y2 >= y1 WITHOUT in-place operations
+    fixed_x2 = torch.maximum(x2, x1 + 1e-6)
+    fixed_y2 = torch.maximum(y2, y1 + 1e-6)
+    
+    # Create new tensor with fixed coordinates
+    fixed = torch.stack([x1, y1, fixed_x2, fixed_y2], dim=1)
+    
+    return fixed
+
+def _box_iou(boxes1: torch.Tensor, boxes2: torch.Tensor) -> tuple:
+    """Compute IoU and union between two sets of boxes."""
+    area1 = (boxes1[:, 2] - boxes1[:, 0]) * (boxes1[:, 3] - boxes1[:, 1])
+    area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
+    
+    lt = torch.max(boxes1[:, None, :2], boxes2[:, :2])  # [N, M, 2]
+    rb = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])  # [N, M, 2]
+    
+    wh = (rb - lt).clamp(min=0)  # [N, M, 2]
+    inter = wh[:, :, 0] * wh[:, :, 1]  # [N, M]
+    
+    union = area1[:, None] + area2 - inter
+    iou = inter / (union + 1e-7)
+    
+    return iou, union 
